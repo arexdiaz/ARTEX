@@ -93,12 +93,13 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
   if (exhausted) activeID = "";
   if (task.active_llm_profile_id) activeID = String(task.active_llm_profile_id);
   const activeProfile = profiles.find((profile) => profile.id === activeID);
+  const activeSelection = task.llm_selections?.find((selection) => String(selection.profile_id) === activeID);
   const currentLabel = exhausted
     ? "Configuration chain exhausted"
     : (activeProfile?.name ?? (activeID ? `Config #${activeID}` : "Follow default config"));
   const activeIndex = chain.indexOf(activeID);
   const backupCount = activeIndex >= 0 ? Math.max(0, chain.length - activeIndex - 1) : 0;
-  const currentTitle = [currentLabel, activeProfile?.model, backupCount > 0 ? `${backupCount} backups` : ""]
+  const currentTitle = [currentLabel, activeSelection?.model || activeProfile?.model || activeProfile?.default_model, activeSelection?.reasoning_effort, backupCount > 0 ? `${backupCount} backups` : ""]
     .filter(Boolean)
     .join(" · ");
   let editorDescription = "Changes to the order or the current config take effect from the next LLM call.";
@@ -181,6 +182,7 @@ function TaskLLMControl({ task, profiles, onUpdated }: { task: Task; profiles: L
 
         <TaskLLMProfileChain
           profiles={profiles}
+          selections={task.llm_selections}
           value={profileIDs}
           onValueChange={handleProfileIDsChange}
           activeProfileId={activeProfileID}

@@ -18,10 +18,11 @@ import {
   ComboboxValue,
 } from "@/components/ui/combobox";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { LLMProfile } from "@/lib/types";
+import type { LLMProfile, Task } from "@/lib/types";
 
 interface TaskLLMProfileChainProps {
   profiles: LLMProfile[];
+  selections?: Task["llm_selections"];
   value: string[];
   onValueChange: (value: string[]) => void;
   activeProfileId?: string;
@@ -45,6 +46,7 @@ function ProfileRoleBadge({ index, currentIndex }: { index: number; currentIndex
 
 export function TaskLLMProfileChain({
   profiles,
+  selections,
   value,
   onValueChange,
   activeProfileId,
@@ -54,6 +56,7 @@ export function TaskLLMProfileChain({
   portalContainer,
 }: TaskLLMProfileChainProps) {
   const profilesByID = React.useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
+  const selectionsByID = React.useMemo(() => new Map((selections ?? []).map((selection) => [String(selection.profile_id), selection])), [selections]);
   const itemIDs = React.useMemo(() => profiles.map((profile) => profile.id), [profiles]);
   const profilesUnavailable = profiles.length === 0;
   const currentProfileID = activeProfileId && value.includes(activeProfileId) ? activeProfileId : value[0];
@@ -136,11 +139,12 @@ export function TaskLLMProfileChain({
       </Combobox>
 
       {value.length === 0 ? (
-        <p className="text-muted-foreground text-xs">When no profile is set, the task follows the agent or the global active profile.</p>
+        <p className="text-muted-foreground text-xs">When no provider is selected, the task saves the system default model and reasoning.</p>
       ) : (
         <div className="flex flex-col divide-y rounded-lg border">
           {value.map((id, index) => {
             const profile = profilesByID.get(id);
+            const selection = selectionsByID.get(id);
             return (
               <div
                 key={id}
@@ -150,8 +154,9 @@ export function TaskLLMProfileChain({
                 <div className="min-w-0 sm:flex-1">
                   <p className="truncate font-medium text-sm">{profile?.name ?? `Profile #${id}`}</p>
                   <div className="flex min-w-0 items-center gap-2">
-                    <p className="truncate text-muted-foreground text-xs">{profile?.model ?? "Profile unavailable"}</p>
+                    <p className="truncate text-muted-foreground text-xs">{selection?.model || profile?.model || profile?.default_model || "Default model required"}</p>
                   </div>
+                  {selection && <p className="truncate text-muted-foreground text-xs">{selection.thinking_type === "disabled" ? "Reasoning off" : selection.reasoning_effort ? `Reasoning ${selection.reasoning_effort}` : "Model default reasoning"}</p>}
                 </div>
                 <ProfileRoleBadge index={index} currentIndex={currentIndex} />
                 <div className="col-span-2 col-start-2 flex shrink-0 items-center gap-1 justify-self-end sm:col-auto sm:justify-self-auto">
