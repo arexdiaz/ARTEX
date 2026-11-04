@@ -264,7 +264,7 @@ export default function NotifyPage() {
   const defaultRate = meta?.kinds.find((k) => k.kind === form.kind)?.default_rate_per_min ?? 0;
 
   return (
-    <div className="flex flex-1 flex-col gap-4 md:gap-6">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Notifications</h1>
@@ -288,7 +288,7 @@ export default function NotifyPage() {
       </div>
 
       {meta && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-(--app-panel-gap) sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="Channels" value={`${meta.stats.channels_on} / ${meta.stats.channels}`} hint="On / total" />
           <StatTile label="Sent today" value={String(meta.stats.sent_today)} />
           <StatTile label="Pending" value={String(meta.stats.pending)} />
@@ -346,7 +346,7 @@ export default function NotifyPage() {
         </TabsList>
 
         <TabsContent value="channels">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-(--app-panel-gap) sm:grid-cols-2 lg:grid-cols-3">
             <button
               type="button"
               onClick={openAdd}

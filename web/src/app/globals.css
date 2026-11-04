@@ -55,6 +55,9 @@
 /* Default theme styles (used when no data-theme-preset is set or when 'default' is selected).
 These serve as the fallback; there is no separate default.css file. */
 :root {
+  --app-page-padding: 4px;
+  --app-panel-gap: 4px;
+  --app-section-gap: 8px;
   --radius: 0.625rem;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);

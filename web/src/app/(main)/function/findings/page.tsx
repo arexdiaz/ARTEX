@@ -815,7 +815,7 @@ export default function FindingsPage() {
   );
 
   return (
-    <div className="flex flex-1 flex-col gap-4 md:gap-6">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Findings</h1>
@@ -829,8 +829,8 @@ export default function FindingsPage() {
           </TabsList>
         </Tabs>
       </div>
-      <div className="flex flex-1 flex-col gap-4 md:gap-6">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="flex flex-1 flex-col gap-(--app-section-gap)">
+        <div className="grid grid-cols-2 gap-(--app-panel-gap) sm:grid-cols-3 lg:grid-cols-6">
           {statCards.map((stat) => {
             const StatIcon = stat.icon;
             return (
@@ -962,7 +962,7 @@ export default function FindingsPage() {
         {view === "flat" && flatListCard}
 
         {view === "asset" && (
-          <div className="grid min-h-0 items-start gap-4 lg:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[24rem_minmax(0,1fr)]">
+          <div className="grid min-h-0 items-start gap-(--app-panel-gap) lg:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[24rem_minmax(0,1fr)]">
             <Card className="gap-0 py-3 lg:sticky lg:top-4">
               <CardContent className="flex flex-col px-3">
                 {assetTree.loading && !assetTree.loaded ? (

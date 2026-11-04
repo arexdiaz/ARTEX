@@ -399,7 +399,7 @@ export default function ToolsPage() {
   const openTool = (t: Tool) => (t.system ? setSelectedKey(t.key) : setCustomEdit(t));
 
   return (
-    <div className="flex flex-1 flex-col gap-4 md:gap-6">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Tools</h1>
@@ -438,7 +438,7 @@ export default function ToolsPage() {
                   {query.trim() ? "No matching system tools" : "(no system tools yet, waiting for the backend seed)"}
                 </p>
               ) : (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-(--app-panel-gap) sm:grid-cols-2 lg:grid-cols-3">
                   {systemTools.map((t) => (
                     <ToolGridCard key={t.key} tool={t} onClick={() => openTool(t)} />
                   ))}
@@ -471,7 +471,7 @@ export default function ToolsPage() {
                   {query.trim() ? "No matching custom tools" : "(no custom tools yet; click 'Create custom tool' in the top right)"}
                 </p>
               ) : (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-(--app-panel-gap) sm:grid-cols-2 lg:grid-cols-3">
                   {customTools.map((t) => (
                     <ToolGridCard key={t.key} tool={t} onClick={() => openTool(t)} />
                   ))}

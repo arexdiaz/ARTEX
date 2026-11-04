@@ -76,6 +76,7 @@ export default function Layout({ children }: Readonly<{ children: ReactNode }>) 
           "[html[data-content-layout=centered]_&>*]:max-w-screen-2xl",
           "peer-data-[variant=inset]:border",
           "[--dashboard-header-height:--spacing(12)]",
+          "[--app-shell-offset:0px] md:peer-data-[variant=inset]:[--app-shell-offset:calc(var(--app-panel-gap)*2+2px)]",
           "min-w-0 overflow-x-hidden",
         )}
       >

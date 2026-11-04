@@ -1564,14 +1564,12 @@ export function SessionsTab({ taskId, taskPaused = false }: { taskId: string; ta
 
   return (
     <TooltipProvider delayDuration={300}>
-      {/* Height reserve: page header (title row + goal + Tabs ≈ 7.5rem) + content padding. Mobile p-4,
-        desktop lg:p-6, and desktop also needs scroll headroom, so the two tiers reserve 10rem / 13rem respectively — mobile
-        reusing 13rem would waste 3rem of transcript height. */}
+      {/* The task layout supplies the space left below its header and tabs. */}
       <div
         className={cn(
-          "grid h-[calc(100svh-10rem)] min-h-0 grid-cols-1 gap-4",
+          "grid h-full min-h-0 grid-cols-1 gap-(--app-panel-gap)",
           listOpen ? "grid-rows-[minmax(0,40svh)_minmax(0,1fr)]" : "grid-rows-[auto_minmax(0,1fr)]",
-          "lg:h-[calc(100svh-13rem)] lg:grid-cols-[18rem_1fr] lg:grid-rows-[minmax(0,1fr)]",
+          "lg:grid-cols-[18rem_1fr] lg:grid-rows-[minmax(0,1fr)]",
         )}
       >
         {/* Left: session list */}

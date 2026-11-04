@@ -140,12 +140,12 @@ export default function LogsPage() {
   }, [lines]);
 
   return (
-    <div className="flex flex-1 flex-col gap-3">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">System logs</h1>
         <p className="text-muted-foreground text-sm">Live backend log stream (planner / worker / database / traffic …)</p>
       </div>
-      <div className="flex flex-1 flex-col gap-3">
+      <div className="flex flex-1 flex-col gap-(--app-section-gap)">
         <div className="flex flex-wrap items-center gap-2">
           <Input
             placeholder="Filter (text / tag)…"

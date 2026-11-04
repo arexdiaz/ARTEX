@@ -54,7 +54,7 @@ export function MainContent({ children }: { children: ReactNode }) {
           "[html[data-navbar-style=sticky]_&]:sticky [html[data-navbar-style=sticky]_&]:top-0 [html[data-navbar-style=sticky]_&]:z-50 [html[data-navbar-style=sticky]_&]:overflow-hidden [html[data-navbar-style=sticky]_&]:rounded-t-[inherit] [html[data-navbar-style=sticky]_&]:bg-background/50 [html[data-navbar-style=sticky]_&]:backdrop-blur-md",
         )}
       >
-        <div className="flex w-full items-center justify-between px-4 lg:px-6">
+        <div className="flex w-full items-center justify-between px-2">
           <div className="flex items-center gap-1 lg:gap-2">
             <SidebarTrigger className="-ml-1" />
             <Separator
@@ -73,7 +73,7 @@ export function MainContent({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden p-4 has-data-[content-padding=false]:p-0 md:p-6 md:has-data-[content-padding=false]:p-0">
+      <div data-slot="app-content" className="min-h-0 min-w-0 flex-1 overflow-x-hidden p-(--app-page-padding) has-data-[content-padding=false]:p-0">
         {children}
       </div>
     </>

@@ -253,7 +253,7 @@ export default function SystemSettingsPage() {
   const braveNeedsKey = webSearch && backend === "brave-free" && !braveKeySet;
 
   return (
-    <div className="flex flex-1 flex-col gap-4 md:gap-6">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">System settings</h1>
         <p className="text-muted-foreground text-sm">Global runtime switches</p>

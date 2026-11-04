@@ -313,7 +313,7 @@ export default function AssetsPage() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-6rem)] min-h-0 flex-col gap-4">
+    <div className="flex h-[calc(100svh-var(--dashboard-header-height)-var(--app-shell-offset,0px)-var(--app-page-padding)*2)] min-h-0 flex-col gap-(--app-section-gap)">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Assets</h1>

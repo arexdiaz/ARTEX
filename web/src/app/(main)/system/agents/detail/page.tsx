@@ -18,7 +18,7 @@ function AgentDetailInner() {
   const key = searchParams.get("key") ?? "";
 
   return (
-    <div className="flex flex-1 flex-col gap-4">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div className="flex items-center gap-2">
         <Button asChild variant="ghost" size="icon-sm">
           <Link href="/system/agents">

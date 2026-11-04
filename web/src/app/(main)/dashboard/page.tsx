@@ -492,7 +492,7 @@ export default function DashboardPage() {
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-1 flex-col gap-4 pb-6">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap) pb-(--app-page-padding)">
       {/* ── Header ── */}
       <div>
         <div>
@@ -502,7 +502,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Row 1: 5 stat cards ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-(--app-panel-gap) sm:grid-cols-3 lg:grid-cols-5">
         {/* Active tasks */}
         <Card className="gap-1">
           <CardHeader className="pb-0">
@@ -676,7 +676,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Body: metrics left + bar chart right */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_1fr]">
+        <div className="grid grid-cols-1 gap-(--app-panel-gap) lg:grid-cols-[220px_1fr]">
           {/* Left: key metrics */}
           <div className="flex flex-col gap-4">
             {/* Total */}
@@ -845,7 +845,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* ── Row 3: Activity feed | Findings ── */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-(--app-panel-gap) lg:grid-cols-2">
         {/* Activity feed */}
         <Card className="p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -1042,7 +1042,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* ── Row 5: Asset distribution | Traffic status codes | Interception & pending approvals ── */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-(--app-panel-gap) lg:grid-cols-3">
         {/* Asset distribution */}
         <Card className="p-4">
           <SectionTitle icon={NetworkIcon} sub="By type">

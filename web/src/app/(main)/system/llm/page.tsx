@@ -931,7 +931,7 @@ export default function LLMPage() {
   const poolOn = pool?.enabled ?? false;
 
   return (
-    <div className="flex flex-1 flex-col gap-4 md:gap-6">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-semibold text-xl tracking-tight">LLM</h1>
@@ -961,8 +961,8 @@ export default function LLMPage() {
           <TabsTrigger value="retry">Retry & backoff</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="profiles" className="mt-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <TabsContent value="profiles" className="mt-0">
+          <div className="grid grid-cols-1 gap-(--app-panel-gap) md:grid-cols-2 xl:grid-cols-3">
             {profiles.map((p) => {
               const h = healthOf(p, health.get(p.id));
               return (
@@ -1097,7 +1097,7 @@ export default function LLMPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="retry" className="mt-4">
+        <TabsContent value="retry" className="mt-0">
           <RetryPolicyPanel />
         </TabsContent>
       </Tabs>

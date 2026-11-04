@@ -220,7 +220,7 @@ export default function AgentsPage() {
   const editing = agents.find((a) => a.key === editKey) ?? null;
 
   return (
-    <div className="flex flex-1 flex-col gap-4 md:gap-6">
+    <div className="flex flex-1 flex-col gap-(--app-section-gap)">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Agent</h1>
@@ -245,7 +245,7 @@ export default function AgentsPage() {
           {agents.length === 0 ? (
             <p className="text-muted-foreground py-6 text-center text-sm">(no agents)</p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-(--app-panel-gap) sm:grid-cols-2 lg:grid-cols-3">
               {agents.map((a) => (
                 <AgentGridCard key={a.key} agent={a} onOpen={() => setEditKey(a.key)} onDeleted={reload} />
               ))}

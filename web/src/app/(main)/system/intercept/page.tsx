@@ -313,7 +313,7 @@ function JudgeCard() {
                 Refresh
               </Button>
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <div className="grid grid-cols-2 gap-(--app-panel-gap) sm:grid-cols-5">
               <JudgeStat label="Approval calls" value={usage.calls.toLocaleString()} />
               <JudgeStat label="Input tokens" value={fmtTokens(usage.input_tokens)} />
               <JudgeStat label="Output tokens" value={fmtTokens(usage.output_tokens)} />
@@ -333,7 +333,7 @@ function JudgeCard() {
       )}
 
       {cfg.enabled && (
-        <div className="grid gap-4 lg:grid-cols-5">
+        <div className="grid gap-(--app-panel-gap) lg:grid-cols-5">
           {/* Left: prompt editor (expanded inline, main area) */}
           <Card className="lg:col-span-3">
             <CardContent className="flex h-full flex-col gap-2 p-4">

@@ -780,8 +780,8 @@ export default function TasksPage() {
   );
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-4">
-      <TabsList className="mx-4 lg:mx-6">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-(--app-section-gap)">
+      <TabsList>
         <TabsTrigger value="current">Current tasks</TabsTrigger>
         <TabsTrigger value="archived">Archived</TabsTrigger>
       </TabsList>

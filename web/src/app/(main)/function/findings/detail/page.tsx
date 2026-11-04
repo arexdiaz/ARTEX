@@ -161,7 +161,7 @@ function FindingDetailInner() {
       <div className="flex-1 p-4 lg:p-6">
         {/* Overview: left (digest + evidence) / right (status panel) */}
         <TabsContent value="overview" className="mt-0">
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-(--app-panel-gap) lg:grid-cols-3">
             {/* Left column */}
             <div className="flex flex-col gap-4 lg:col-span-2">
               <Card>

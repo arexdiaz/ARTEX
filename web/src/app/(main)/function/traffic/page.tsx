@@ -338,7 +338,7 @@ export default function TrafficPage() {
   const rangeEnd = page * size + exchanges.length;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-(--app-section-gap)">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Traffic</h1>
