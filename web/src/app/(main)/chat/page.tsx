@@ -5,7 +5,6 @@ import * as React from "react";
 import {
   ArrowUpIcon,
   Bot,
-  ChevronDownIcon,
   ChevronRightIcon,
   ListChecksIcon,
   Loader2Icon,
@@ -18,10 +17,10 @@ import {
   Square,
   Trash2Icon,
   XIcon,
-  ZapIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { ChatModelPicker, type ChatModelChoice } from "@/components/chat-model-picker";
 import { MentionTextarea } from "@/components/mention-textarea";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
@@ -48,7 +47,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
@@ -276,90 +274,6 @@ function Composer({
   );
 }
 
-// LLMProfileRow shows the active LLM config below the composer and lets the user
-// switch it via a Popover. `selected` is the profile id or null for default.
-function LLMProfileRow({
-  profiles,
-  selected,
-  onChange,
-  disabled,
-  rightSlot,
-}: {
-  profiles: LLMProfile[];
-  selected: number | null;
-  onChange: (id: number | null) => void;
-  disabled?: boolean;
-  rightSlot?: React.ReactNode;
-}) {
-  const [open, setOpen] = React.useState(false);
-  const activeDefault = profiles.find((p) => p.is_default);
-  const current = selected != null ? profiles.find((p) => Number(p.id) === selected) : null;
-  const label = current ? current.name : `Default${activeDefault ? ` (${activeDefault.name})` : ""}`;
-
-  return (
-    <div className="flex min-w-0 shrink-0 items-center gap-1 px-1 pt-0.5 pb-1">
-      <ZapIcon className="text-muted-foreground/50 size-3 shrink-0" />
-      <span className="truncate text-muted-foreground/70 text-xs" title={label}>
-        {label}
-      </span>
-      <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            disabled={disabled}
-            className="flex shrink-0 items-center gap-0.5 text-primary text-xs hover:underline disabled:pointer-events-none disabled:opacity-40"
-          >
-            Change
-            <ChevronDownIcon className="size-3" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-64 p-1">
-          <p className="text-muted-foreground px-2 py-1 text-[11px] font-medium">Select an LLM profile</p>
-          {/* default option */}
-          <button
-            type="button"
-            onClick={() => {
-              onChange(null);
-              setOpen(false);
-            }}
-            className={cn(
-              "flex w-full flex-col rounded px-2 py-1.5 text-left hover:bg-accent",
-              selected == null && "bg-accent",
-            )}
-          >
-            <span className="text-sm">Default{activeDefault ? ` (${activeDefault.name})` : ""}</span>
-            {activeDefault && (
-              <span className="text-muted-foreground text-[11px]">
-                {activeDefault.format} · {activeDefault.model}
-              </span>
-            )}
-          </button>
-          {profiles.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => {
-                onChange(Number(p.id));
-                setOpen(false);
-              }}
-              className={cn(
-                "flex w-full flex-col rounded px-2 py-1.5 text-left hover:bg-accent",
-                selected === Number(p.id) && "bg-accent",
-              )}
-            >
-              <span className="text-sm">{p.name}</span>
-              <span className="text-muted-foreground text-[11px]">
-                {p.format} · {p.model}
-              </span>
-            </button>
-          ))}
-        </PopoverContent>
-      </Popover>
-      {rightSlot}
-    </div>
-  );
-}
-
 // DraftChat is the default right-pane view: a fresh chat (agent picker in the
 // header, centered empty state, composer) with NO conversation created yet. The
 // conversation is created lazily on the first send (ChatGPT-style), then the
@@ -374,7 +288,7 @@ function DraftChat({
   onStarted: (c: Conversation, pending?: { input?: string; attachments?: ChatAttachment[] }) => void;
 }) {
   const [agentKey, setAgentKey] = React.useState("");
-  const [llmProfileId, setLlmProfileId] = React.useState<number | null>(null);
+  const [modelChoice, setModelChoice] = React.useState<ChatModelChoice>({ profileId: null, model: "", effort: null });
   const [input, setInput] = React.useState("");
   const [sending, setSending] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
@@ -391,7 +305,10 @@ function DraftChat({
     if (!msg || !agentKey || sending) return;
     setSending(true);
     try {
-      const c = await api.createConversation(agentKey, "", llmProfileId);
+      const c = await api.createConversation(agentKey, "", modelChoice.profileId, {
+        llm_model: modelChoice.model,
+        reasoning_effort: modelChoice.effort,
+      });
       await api.sendConversationMessage(c.id, msg);
       onStarted(c);
     } catch (e) {
@@ -409,7 +326,10 @@ function DraftChat({
     if (files.length === 0 || !agentKey || uploading || sending) return;
     setUploading(true);
     try {
-      const c = await api.createConversation(agentKey, "", llmProfileId);
+      const c = await api.createConversation(agentKey, "", modelChoice.profileId, {
+        llm_model: modelChoice.model,
+        reasoning_effort: modelChoice.effort,
+      });
       const r = await api.chatUpload("session", `conv-${c.id}`, files);
       onStarted(c, { input, attachments: r.attachments });
     } catch (e) {
@@ -464,10 +384,11 @@ function DraftChat({
         onPickFiles={pickFiles}
         uploading={uploading}
       />
-      <LLMProfileRow
+      <ChatModelPicker
         profiles={profiles}
-        selected={llmProfileId}
-        onChange={setLlmProfileId}
+        value={modelChoice}
+        defaultProfileId={agent?.llm_profile_id}
+        onChange={setModelChoice}
         disabled={sending || uploading}
       />
     </>
@@ -510,15 +431,32 @@ function ChatView({
   const [historyLoaded, setHistoryLoaded] = React.useState(false);
   const [hasMore, setHasMore] = React.useState(false); // drives the "load earlier" hint
   const agent = agents.find((a) => a.key === conv.agent_key);
-  const currentProfileId = conv.llm_profile_id ?? null;
+  const [currentChoice, setCurrentChoice] = React.useState<ChatModelChoice>({
+    profileId: conv.llm_profile_id ?? null,
+    model: conv.llm_model ?? "",
+    effort: conv.reasoning_effort ?? null,
+  });
+  React.useEffect(() => {
+    setCurrentChoice({
+      profileId: conv.llm_profile_id ?? null,
+      model: conv.llm_model ?? "",
+      effort: conv.reasoning_effort ?? null,
+    });
+  }, [conv.llm_profile_id, conv.llm_model, conv.reasoning_effort]);
+  const [switchingModel, setSwitchingModel] = React.useState(false);
   const side = useSideQuestions(`/api/conversations/${conv.id}`);
 
-  async function changeProfile(id: number | null) {
+  async function changeModel(choice: ChatModelChoice) {
+    setSwitchingModel(true);
     try {
-      await api.updateConversationProfile(conv.id, id);
+      await api.updateConversationProfile(conv.id, choice.profileId, {
+        llm_model: choice.model,
+        reasoning_effort: choice.effort,
+      });
+      setCurrentChoice(choice);
       onConvUpdated();
-    } catch (e) {
-      toast.error("Failed to switch LLM: " + (e as Error).message);
+    } finally {
+      setSwitchingModel(false);
     }
   }
 
@@ -607,14 +545,23 @@ function ChatView({
     };
   }, [running, conv.id, onTitleMaybeChanged]);
 
-  const loadFocusPage = React.useCallback((before: number) => api.conversationHistory(conv.id, before, HISTORY_PAGE), [conv.id]);
+  const loadFocusPage = React.useCallback(
+    (before: number) => api.conversationHistory(conv.id, before, HISTORY_PAGE),
+    [conv.id],
+  );
   const mergeFocusPage = React.useCallback((page: { items: Activity[]; hasMore: boolean }) => {
     setMessages((prev) => mergeActivities(page.items, prev));
     earliestRef.current = page.items[0]?.seq ?? earliestRef.current;
     hasMoreRef.current = page.hasMore;
     setHasMore(page.hasMore);
   }, []);
-  const focusHistory = useApprovalHistory(approvalFocus.state?.source, historyLoaded, messages, loadFocusPage, mergeFocusPage);
+  const focusHistory = useApprovalHistory(
+    approvalFocus.state?.source,
+    historyLoaded,
+    messages,
+    loadFocusPage,
+    mergeFocusPage,
+  );
 
   // ---- transcript auto-scroll (open → bottom; stick to bottom unless scrolled up) ----
   const contentRef = React.useRef<HTMLDivElement | null>(null);
@@ -814,7 +761,7 @@ function ChatView({
         value={input}
         onChange={setInput}
         onSend={send}
-        disabled={running || sending}
+        disabled={running || sending || switchingModel}
         allowBtw
         placeholder={running ? "Agent is replying; type /btw to ask a side question…" : "Type a message, @ to reference records, Enter to send"}
         running={running}
@@ -825,11 +772,12 @@ function ChatView({
         onRemoveAttachment={(path) => setAttachments((p) => p.filter((x) => x.path !== path))}
         uploading={uploading}
       />
-      <LLMProfileRow
+      <ChatModelPicker
         profiles={profiles}
-        selected={currentProfileId}
-        onChange={changeProfile}
-        disabled={running || sending}
+        value={currentChoice}
+        defaultProfileId={agent?.llm_profile_id}
+        onChange={changeModel}
+        disabled={running || sending || switchingModel}
         rightSlot={<TodoPopover seq={latestTodoSeq} fetchDetail={fetchDetail} />}
       />
     </SideQuestionWorkspace>
@@ -1050,15 +998,18 @@ export default function ChatPage() {
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
   const [sourceRequested, setSourceRequested] = React.useState(false);
   const [convsLoaded, setConvsLoaded] = React.useState(false);
-  const selectConversation = React.useCallback((id: number | null) => {
-    if (id !== selectedId) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("approval");
-      setSourceRequested(false);
-      window.history.replaceState(null, "", url);
-    }
-    setSelectedId(id);
-  }, [selectedId]);
+  const selectConversation = React.useCallback(
+    (id: number | null) => {
+      if (id !== selectedId) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("approval");
+        setSourceRequested(false);
+        window.history.replaceState(null, "", url);
+      }
+      setSelectedId(id);
+    },
+    [selectedId],
+  );
 
   const [renamingId, setRenamingId] = React.useState<number | null>(null);
   const [renameText, setRenameText] = React.useState("");

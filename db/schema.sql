@@ -984,6 +984,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS llm_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reasoning_effort TEXT;
 CREATE INDEX IF NOT EXISTS idx_conversations_llm_profile ON conversations(llm_profile_id) WHERE llm_profile_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(pinned_at DESC) WHERE pinned_at IS NOT NULL;
 DROP TRIGGER IF EXISTS trg_conversations_upd ON conversations;

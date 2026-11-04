@@ -34,13 +34,20 @@ func (p Parent) Key() string {
 
 // Model contains only configuration identity, never credentials or proxy URLs.
 type Model struct {
-	ProfileID    int64  `json:"profile_id"`
-	Name         string `json:"name"`
-	Format       string `json:"format"`
-	Model        string `json:"model"`
-	Identity     string `json:"identity"`
-	Streaming    bool   `json:"streaming"`
-	WindowTokens int    `json:"window_tokens"`
+	ProfileID    int64           `json:"profile_id"`
+	Name         string          `json:"name"`
+	Format       string          `json:"format"`
+	Model        string          `json:"model"`
+	Identity     string          `json:"identity"`
+	Streaming    bool            `json:"streaming"`
+	WindowTokens int             `json:"window_tokens"`
+	Selection    *ModelSelection `json:"selection,omitempty"`
+}
+
+// ModelSelection preserves conversation-local options when replaying a side question.
+type ModelSelection struct {
+	Model           string  `json:"model"`
+	ReasoningEffort *string `json:"reasoning_effort"`
 }
 
 type Snapshot struct {

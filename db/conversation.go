@@ -50,14 +50,16 @@ GROUP BY c.id`)
 // Conversation is one ChatGPT-style chat thread bound to an agent key. It lives
 // independent of the pentest exploration graph — see schema.sql §I.
 type Conversation struct {
-	ID           int64      `json:"id"`
-	AgentKey     string     `json:"agent_key"`
-	Title        string     `json:"title"`
-	LLMProfileID *int64     `json:"llm_profile_id,omitempty"`
-	Pinned       bool       `json:"pinned"`
-	PinnedAt     *time.Time `json:"pinned_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID              int64      `json:"id"`
+	AgentKey        string     `json:"agent_key"`
+	Title           string     `json:"title"`
+	LLMProfileID    *int64     `json:"llm_profile_id,omitempty"`
+	LLMModel        string     `json:"llm_model,omitempty"`
+	ReasoningEffort *string    `json:"reasoning_effort,omitempty"` // nil inherits the profile; empty explicitly omits effort
+	Pinned          bool       `json:"pinned"`
+	PinnedAt        *time.Time `json:"pinned_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // ConversationPatch updates only the fields whose pointers are non-nil.
@@ -66,12 +68,12 @@ type ConversationPatch struct {
 	Pinned *bool
 }
 
-const convCols = `id, agent_key, title, llm_profile_id, pinned_at, created_at, updated_at`
+const convCols = `id, agent_key, title, llm_profile_id, pinned_at, created_at, updated_at, llm_model, reasoning_effort`
 
 func scanConv(row interface{ Scan(...any) error }) (Conversation, error) {
 	var c Conversation
 	var pinnedAt sql.NullTime
-	err := row.Scan(&c.ID, &c.AgentKey, &c.Title, &c.LLMProfileID, &pinnedAt, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &c.AgentKey, &c.Title, &c.LLMProfileID, &pinnedAt, &c.CreatedAt, &c.UpdatedAt, &c.LLMModel, &c.ReasoningEffort)
 	if pinnedAt.Valid {
 		c.Pinned = true
 		c.PinnedAt = &pinnedAt.Time
@@ -81,7 +83,7 @@ func scanConv(row interface{ Scan(...any) error }) (Conversation, error) {
 
 // CreateConversation opens a new chat thread for agentKey with an initial title.
 // llmProfileID may be nil to use the globally active profile.
-func (d *DB) CreateConversation(agentKey, title string, llmProfileID *int64) (*Conversation, error) {
+func (d *DB) CreateConversation(agentKey, title string, llmProfileID *int64, choices ...ConversationModel) (*Conversation, error) {
 	tx, err := d.Begin()
 	if err != nil {
 		return nil, err
@@ -107,6 +109,13 @@ WHERE id=$1 RETURNING `+convCols, c.ID, llmProfileID))
 			return nil, err
 		}
 	}
+	if len(choices) > 0 {
+		c, err = scanConv(tx.QueryRow(`UPDATE conversations SET llm_model=$2,reasoning_effort=$3 WHERE id=$1 RETURNING `+convCols,
+			c.ID, choices[0].Model, choices[0].ReasoningEffort))
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -115,6 +124,16 @@ WHERE id=$1 RETURNING `+convCols, c.ID, llmProfileID))
 
 // UpdateConversationProfile sets (or clears) the LLM profile override for a conversation.
 func (d *DB) UpdateConversationProfile(id int64, llmProfileID *int64) error {
+	return d.UpdateConversationModel(id, llmProfileID, ConversationModel{})
+}
+
+type ConversationModel struct {
+	Model           string  `json:"llm_model"`
+	ReasoningEffort *string `json:"reasoning_effort"`
+}
+
+// UpdateConversationModel changes the profile and its conversation-local options atomically.
+func (d *DB) UpdateConversationModel(id int64, llmProfileID *int64, choice ConversationModel) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -132,7 +151,7 @@ func (d *DB) UpdateConversationProfile(id int64, llmProfileID *int64) error {
 	if err := lockLLMProfileForReference(tx, llmProfileID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE conversations SET llm_profile_id=$2 WHERE id=$1`, id, llmProfileID); err != nil {
+	if _, err := tx.Exec(`UPDATE conversations SET llm_profile_id=$2,llm_model=$3,reasoning_effort=$4 WHERE id=$1`, id, llmProfileID, choice.Model, choice.ReasoningEffort); err != nil {
 		return err
 	}
 	return tx.Commit()

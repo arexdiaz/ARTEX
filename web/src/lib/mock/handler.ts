@@ -48,6 +48,7 @@ const mockLLMRecords = structuredClone(D.llmRecords);
 const mockTaskTemplates = structuredClone(D.taskTemplates);
 const mockTaskCategories = structuredClone(D.taskCategories);
 const mockConversations = structuredClone(D.conversations);
+const mockLLMProfiles = structuredClone(D.llmProfiles);
 const mockRetests: FindingRetest[] = [];
 const mockRetestMessages: Record<number, Activity[]> = {};
 
@@ -2257,8 +2258,23 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/llm" && m === "POST") return { ok: true };
   if (path === "/llm/test")
     return { ok: true, latency_ms: 128, model: String(b.model ?? "claude-opus-4-8"), reply: "OK" };
-  if (path === "/llm/profiles" && m === "GET") return { profiles: D.llmProfiles };
-  if (path === "/llm/profiles" && m === "POST") return { id: Number(b.id) || 3 };
+  if (path === "/llm/models")
+    return { ok: true, models: ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.3", "kimi-k3.1-pro"] };
+  if (path === "/llm/profiles" && m === "GET") return { profiles: structuredClone(mockLLMProfiles) };
+  if (path === "/llm/profiles" && m === "POST") {
+    const id = Number(b.id) || Math.max(0, ...mockLLMProfiles.map((profile) => Number(profile.id))) + 1;
+    const index = mockLLMProfiles.findIndex((profile) => Number(profile.id) === id);
+    const profile = {
+      ...(index >= 0 ? mockLLMProfiles[index] : { is_default: false, rate_per_second: 0, rate_per_minute: 0 }),
+      ...b,
+      id: String(id),
+      api_key_hint: b.api_key ? "…demo" : index >= 0 ? mockLLMProfiles[index].api_key_hint : "",
+    } as (typeof D.llmProfiles)[number];
+    delete (profile as unknown as Record<string, unknown>).api_key;
+    if (index >= 0) mockLLMProfiles[index] = profile;
+    else mockLLMProfiles.push(profile);
+    return { id };
+  }
   if (path === "/llm/profiles/active") return { ok: true };
   if (path === "/llm/pool" && m === "GET") return D.llmPool;
   if (path === "/llm/pool/reset")
@@ -2307,6 +2323,8 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       agent_key: String(b.agent_key ?? "mainagent"),
       title,
       llm_profile_id: typeof b.llm_profile_id === "number" ? b.llm_profile_id : undefined,
+      llm_model: typeof b.llm_model === "string" ? b.llm_model : "",
+      reasoning_effort: typeof b.reasoning_effort === "string" ? b.reasoning_effort : null,
       pinned: false,
       created_at: now,
       updated_at: now,
@@ -2325,6 +2343,15 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     conversation.updated_at = new Date().toISOString();
     sortMockConversations();
     return structuredClone(conversation);
+  }
+  if (seg[0] === "conversations" && seg[2] === "profile" && m === "PATCH") {
+    const conversation = mockConversations.find((item) => item.id === Number(seg[1]));
+    if (conversation) {
+      conversation.llm_profile_id = typeof b.llm_profile_id === "number" ? b.llm_profile_id : undefined;
+      conversation.llm_model = typeof b.llm_model === "string" ? b.llm_model : "";
+      conversation.reasoning_effort = typeof b.reasoning_effort === "string" ? b.reasoning_effort : null;
+    }
+    return { ok: true };
   }
   if (seg[0] === "conversations" && seg.length === 2 && m === "DELETE") {
     const id = Number(seg[1]);

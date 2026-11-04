@@ -1871,6 +1871,11 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := body.LLMProfile
+	p.Name, p.Model = strings.TrimSpace(p.Name), strings.TrimSpace(p.Model)
+	if p.Name == "" {
+		writeErr(w, 400, "profile name is required")
+		return
+	}
 	p.APIKey = body.APIKey
 	p.Streaming = body.Streaming == nil || *body.Streaming
 	// Output cap: negative values are meaningless, clamp to zero (= do not send the
@@ -2057,7 +2062,7 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 	// sent to the endpoint it was saved for, since base_url comes from the form.
 	apiKey := strings.TrimSpace(req.APIKey)
 	withheld := false
-	if apiKey == "" && req.ProfileID != nil {
+	if apiKey == "" && req.ProfileID != nil && s.m != nil && s.m.pg != nil {
 		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
 			if sameLLMEndpoint(req.Provider, req.BaseURL, p.Format, p.BaseURL) {
 				apiKey = p.APIKey
@@ -2148,44 +2153,25 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 			transport.Proxy = http.ProxyURL(pu)
 		}
 	}
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many model catalog redirects")
+		}
+		if req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
+			return fmt.Errorf("model catalog redirect changed origin")
+		}
+		return nil
+	}}
+	defer transport.CloseIdleConnections()
 
 	// Try each candidate; return the first that yields a non-empty model list.
 	var lastErr string
 	emptyOK := false
 	for _, c := range candidates {
-		httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, c.url, nil)
+		models, err := fetchModelCatalog(r.Context(), client, c.url, c.hdr)
 		if err != nil {
-			lastErr = "failed to build request: " + err.Error()
+			lastErr = err.Error()
 			continue
-		}
-		httpReq.Header = c.hdr
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			lastErr = "request failed: " + err.Error()
-			continue
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body[:min(len(body), 512)]))
-			continue
-		}
-		// Both OpenAI and Anthropic return {"data": [{"id": "..."},...]}.
-		var parsed struct {
-			Data []struct {
-				ID string `json:"id"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(body, &parsed); err != nil {
-			lastErr = "failed to parse response: " + err.Error()
-			continue
-		}
-		models := make([]string, 0, len(parsed.Data))
-		for _, m := range parsed.Data {
-			if m.ID != "" {
-				models = append(models, m.ID)
-			}
 		}
 		if len(models) > 0 {
 			writeJSON(w, 200, map[string]any{"ok": true, "models": models})

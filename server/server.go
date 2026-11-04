@@ -106,6 +106,8 @@ type Server struct {
 	provCacheMu   sync.Mutex
 	provByProfile map[int64]*provEntry
 	provCacheGen  uint64
+	provByModel   map[profileModelKey]*provEntry
+	profileLimits map[int64]llm.Provider
 
 	// llmHealth is the process-wide circuit-breaker state for LLM failover (failover pool).
 	// It deliberately lives OUTSIDE the provider caches: rebuilding the chain
@@ -250,7 +252,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		} else {
 			log.Printf("[engine] LLM configured from DB: %s / %s", cfg.Provider(), cfg.Model)
 		}
-	} else if cfg, ok := agent.FromEnv(); ok {
+	} else if cfg, ok := agent.FromEnv(); ok && !s.activeProfileNeedsModel() {
 		if err := s.applyLLM(cfg); err != nil {
 			log.Printf("[engine] env provider init failed — engine idle: %v", err)
 		} else {
@@ -339,7 +341,7 @@ func (s *Server) agentRunSeconds(key string) int {
 // loadLLMConfig reads the active LLM profile from PG (llm_profiles).
 func (s *Server) loadLLMConfig() (agent.Config, bool) {
 	p, err := s.m.pg.ActiveProfile()
-	if err != nil || p == nil {
+	if err != nil || p == nil || strings.TrimSpace(p.Model) == "" {
 		return agent.Config{}, false
 	}
 	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
@@ -408,6 +410,13 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 func (s *Server) reapplyActiveProfile() {
 	cfg, ok := s.loadLLMConfig()
 	if !ok {
+		if p, err := s.m.pg.ActiveProfile(); err == nil && p != nil && strings.TrimSpace(p.Model) == "" {
+			s.cfgMu.Lock()
+			s.chatAgent, s.llmProv, s.llmDirect, s.llmOn = nil, nil, nil, false
+			s.llmCfg = agent.Config{}
+			s.cfgMu.Unlock()
+			s.invalidateTaskAgents()
+		}
 		return
 	}
 	if err := s.applyLLM(cfg); err != nil {
@@ -511,23 +520,8 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 // ok=false when the profile is missing or unusable (no api key for the key-requiring
 // formats).
 func (s *Server) loadProfileConfig(id int64) (agent.Config, bool) {
-	p, err := s.m.pg.ProfileByID(id)
-	if err != nil || p == nil {
-		return agent.Config{}, false
-	}
-	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
-	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
-	cfg.ContextWindowK = p.ContextWindowK
-	cfg.ThinkingType = p.ThinkingType
-	cfg.ReasoningEffort = p.ReasoningEffort
-	cfg.Stream = p.Streaming
-	cfg.MaxTokens, cfg.MaxTokensField = p.MaxTokens, p.MaxTokensField
-	cfg.SessionHeaderKey = p.SessionHeaderKey
-	s.applyProfileRetry(&cfg, p)
-	if cfg.APIKey == "" && cfg.NeedsAPIKey() {
-		return cfg, false
-	}
-	return cfg, true
+	cfg, _, ok := s.loadChatProfileConfig(id, "", nil)
+	return cfg, ok
 }
 
 // effectiveProfileForAgent resolves the LLM profile id an agent should run on, by
@@ -551,6 +545,17 @@ func (s *Server) effectiveProfileForAgent(agentKey string, pinID *int64) *int64 
 // picked a valid profile still got rejected with "LLM not configured" when no global
 // config was active.
 func (s *Server) resolveChatAgent(c *db.Conversation) *agent.ChatAgent {
+	// A model explicitly selected in chat takes precedence over an agent's default.
+	if c.LLMModel != "" || c.ReasoningEffort != nil {
+		if c.LLMProfileID == nil {
+			return nil
+		}
+		prov, cfg, ok := s.providerForChatModel(*c.LLMProfileID, c.LLMModel, c.ReasoningEffort)
+		if !ok {
+			return nil
+		}
+		return s.chatAgentWithModel(prov, cfg)
+	}
 	ca := s.chatAgentRef()
 	if eff := s.effectiveProfileForAgent(c.AgentKey, c.LLMProfileID); eff != nil {
 		if pa := s.chatAgentForProfile(*eff); pa != nil {
@@ -570,6 +575,8 @@ func (s *Server) chatUnavailableReason() string {
 		}
 		if active, err := s.m.pg.ActiveProfile(); err == nil && active == nil {
 			return "No active LLM profile: activate one under System → LLM Profiles, or pick one for this conversation"
+		} else if active != nil && strings.TrimSpace(active.Model) == "" {
+			return "Select a model in chat; the active connection uses automatic model discovery"
 		}
 	}
 	return "LLM not ready for chat: check that System → LLM Profiles has a usable, activated profile"
@@ -584,35 +591,8 @@ func (s *Server) providerForProfile(id int64) (llm.Provider, agent.Config, bool)
 		s.provCacheMu.Unlock()
 		return e.prov, e.cfg, true
 	}
-	generation := s.provCacheGen
 	s.provCacheMu.Unlock()
-	cfg, ok := s.loadProfileConfig(id)
-	if !ok {
-		return nil, agent.Config{}, false
-	}
-	prov, err := cfg.NewProvider()
-	if err != nil {
-		log.Printf("[engine] build provider for LLM profile %d failed: %v", id, err)
-		return nil, agent.Config{}, false
-	}
-	// Wrap with recorder, tagged with this profile's name.
-	if p, _ := s.m.pg.ProfileByID(id); p != nil {
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
-		prov = bindSideProvider(prov, cfg, id, p.Name)
-	}
-	s.provCacheMu.Lock()
-	if generation != s.provCacheGen {
-		s.provCacheMu.Unlock()
-		return s.providerForProfile(id)
-	}
-	if e := s.provByProfile[id]; e != nil { // lost the race → keep the winner
-		prov, cfg = e.prov, e.cfg
-	} else {
-		s.provByProfile[id] = &provEntry{prov: prov, cfg: cfg}
-		log.Printf("[engine] built provider for LLM profile %d (%s / %s)", id, cfg.Provider(), cfg.Model)
-	}
-	s.provCacheMu.Unlock()
-	return prov, cfg, true
+	return s.providerForChatModel(id, "", nil)
 }
 
 // chatAgentForProfile returns a ChatAgent built from a specific LLM profile, cached
@@ -656,6 +636,8 @@ func (s *Server) invalidateProfileAgents() {
 	s.provCacheMu.Lock()
 	s.provCacheGen++
 	s.provByProfile = map[int64]*provEntry{}
+	s.provByModel = nil
+	s.profileLimits = nil
 	s.provCacheMu.Unlock()
 	s.invalidateTaskAgents()
 }

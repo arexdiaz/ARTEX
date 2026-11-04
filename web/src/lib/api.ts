@@ -1013,14 +1013,21 @@ export const api = {
 
   // ---- conversations (chat page) ----
   conversations: () => get<{ conversations: Conversation[] }>("/conversations").then((r) => arr(r.conversations)),
-  createConversation: (agent_key: string, title = "", llm_profile_id?: number | null) =>
-    post<Conversation>("/conversations", { agent_key, title, llm_profile_id: llm_profile_id ?? null }),
+  createConversation: (
+    agent_key: string,
+    title = "",
+    llm_profile_id?: number | null,
+    choice?: { llm_model?: string; reasoning_effort?: string | null },
+  ) => post<Conversation>("/conversations", { agent_key, title, llm_profile_id: llm_profile_id ?? null, ...choice }),
   updateConversation: (id: number, input: { title?: string; pinned?: boolean }) =>
     patch<Conversation>(`/conversations/${id}`, input),
   renameConversation: (id: number, title: string) => patch<Conversation>(`/conversations/${id}`, { title }),
   pinConversation: (id: number, pinned: boolean) => patch<Conversation>(`/conversations/${id}`, { pinned }),
-  updateConversationProfile: (id: number, llm_profile_id: number | null) =>
-    patch<{ ok: boolean }>(`/conversations/${id}/profile`, { llm_profile_id }),
+  updateConversationProfile: (
+    id: number,
+    llm_profile_id: number | null,
+    choice?: { llm_model?: string; reasoning_effort?: string | null },
+  ) => patch<{ ok: boolean }>(`/conversations/${id}/profile`, { llm_profile_id, ...choice }),
   deleteConversation: (id: number) => del<{ deleted: number }>(`/conversations/${id}`),
   deleteConversations: (ids: number[]) =>
     post<{ items: { id: number; ok: boolean; error?: string }[] }>("/conversations/delete/batch", { ids }),

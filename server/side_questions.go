@@ -190,12 +190,20 @@ func (s *Server) sideProvider(model sidequestion.Model) (llm.Provider, error) {
 	var cfg agent.Config
 	var ok bool
 	if model.ProfileID > 0 {
-		// Validate the persisted reference even if a previous provider is cached.
-		current, exists := s.loadProfileConfig(model.ProfileID)
-		if !exists || sideModel(current, model.ProfileID, model.Name).Identity != model.Identity {
-			return nil, errors.New("the model profile was deleted or changed; run the main Agent first to refresh the context")
+		if model.Selection != nil {
+			current, _, exists := s.loadChatProfileConfig(model.ProfileID, model.Selection.Model, model.Selection.ReasoningEffort)
+			if !exists || sideModel(current, model.ProfileID, model.Name).Identity != model.Identity {
+				return nil, errors.New("the model profile was deleted or changed; run the main Agent first to refresh the context")
+			}
+			p, cfg, ok = s.providerForChatModel(model.ProfileID, model.Selection.Model, model.Selection.ReasoningEffort)
+		} else {
+			// Validate the persisted reference even if a previous provider is cached.
+			current, exists := s.loadProfileConfig(model.ProfileID)
+			if !exists || sideModel(current, model.ProfileID, model.Name).Identity != model.Identity {
+				return nil, errors.New("the model profile was deleted or changed; run the main Agent first to refresh the context")
+			}
+			p, cfg, ok = s.providerForProfile(model.ProfileID)
 		}
-		p, cfg, ok = s.providerForProfile(model.ProfileID)
 	} else {
 		s.cfgMu.Lock()
 		p, cfg, ok = s.llmDirect, s.llmCfg, s.llmOn

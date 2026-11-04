@@ -382,6 +382,9 @@ ORDER BY x.task_id`, id)
 	if err := rows.Close(); err != nil {
 		return false, err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET llm_model='',reasoning_effort=NULL WHERE llm_profile_id=$1`, id); err != nil {
+		return false, err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_profiles WHERE id=$1`, id); err != nil {
 		return false, err
 	}

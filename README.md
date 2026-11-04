@@ -178,6 +178,14 @@ Daily cron example (03:20, operator crontab):
 20 3 * * * cd /path/to/ARTEX && scripts/backup.sh --with-data >> backups/backup.log 2>&1
 ```
 
+## Automatic model discovery in chat
+
+In **System → LLM**, leave **Model** blank to discover all models exposed by that connection. In chat, open the model picker to search across connections, select a model, and choose its reasoning effort. Model and reasoning selections are saved with each conversation. Reasoning levels depend on the provider; **Profile default** keeps the connection's settings and **Model default** omits the effort setting.
+
+Use **Edit models** to show or hide individual models. Each provider's checkbox selects or clears the entire provider; a dash indicates a partial selection. Visibility is saved in the current browser and does not change an existing conversation's selected model. **Reset to defaults** shows every model again.
+
+Keep an explicit model on profiles used as task or agent defaults. A connection with a blank model requires a model selection in chat; it does not silently use a built-in model name. Existing profiles with explicit models keep their configured model.
+
 ## Updating and upgrading
 
 > Upgrading only swaps the program and never touches data: the Postgres volume `pgdata`, `./data` (jwt.key / SQLite, etc.), and `./skills` are all preserved. **No manual database migration is needed**: `artex` idempotently re-runs `schema.sql` on every start (with `ADD COLUMN` / `CREATE INDEX IF NOT EXISTS`), i.e. "restart equals migrate". It is still recommended to back up `./data` and the database before upgrading.

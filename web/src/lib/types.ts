@@ -741,6 +741,8 @@ export interface Conversation {
   agent_key: string;
   title: string;
   llm_profile_id?: number;
+  llm_model?: string;
+  reasoning_effort?: string | null;
   pinned?: boolean;
   pinned_at?: string | null;
   created_at: string;

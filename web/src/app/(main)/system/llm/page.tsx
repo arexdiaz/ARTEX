@@ -399,6 +399,12 @@ function ProfileSheet({
     if (testing) return;
     setTesting(true);
     try {
+      if (!model.trim()) {
+        const result = await api.fetchLLMModels(format, baseUrl, apiKey, proxy, profileId);
+        if (result.ok) toast.success("Connected; models are available for selection in chat");
+        else toast.error(`Connection failed: ${result.error ?? "could not discover models"}`);
+        return;
+      }
       // Test with the thinking parameters the profile would actually run, so a model that does not support the field fails here,
       // not when a task is already running. Pass the profile id: with the Key input left empty, the stored Key is used.
       const r = await api.testLLM(
@@ -427,8 +433,8 @@ function ProfileSheet({
   }
 
   async function save() {
-    if (!name.trim() || !model.trim()) {
-      toast.error("Please fill in a name and a model");
+    if (!name.trim()) {
+      toast.error("Please fill in a name");
       return;
     }
     if (saving) return;
@@ -458,7 +464,10 @@ function ProfileSheet({
         retry,
       });
       if (isNew) toast.success(`Created: ${name.trim()} (use "Set as active" on its card to enable it)`);
-      else toast.success(profile?.is_default ? "Saved; the active profile takes effect immediately, no restart needed" : "Saved");
+      else
+        toast.success(
+          profile?.is_default ? "Saved; the active profile takes effect immediately, no restart needed" : "Saved",
+        );
       onSaved(String(id));
       onOpenChange(false);
     } catch (e) {
@@ -525,12 +534,12 @@ function ProfileSheet({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="p-model">Model</Label>
+            <Label htmlFor="p-model">Model (optional)</Label>
             <div className="flex gap-2">
               <Input
                 id="p-model"
                 className="font-mono"
-                placeholder={format === "ollama" ? "llama3.2" : "claude-opus-4-8"}
+                placeholder="Leave blank to discover all models"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
               />
@@ -569,6 +578,9 @@ function ProfileSheet({
                 )}
               </Popover>
             </div>
+            <p className="text-muted-foreground text-xs">
+              Leave blank to choose any available model in chat. Set a model for task or agent defaults.
+            </p>
           </div>
 
           <div className="grid gap-2">
@@ -943,7 +955,9 @@ export default function LLMPage() {
                             {h.label}
                           </Badge>
                         </div>
-                        <code className="mt-1 block truncate font-mono text-muted-foreground text-xs">{p.model}</code>
+                        <code className="mt-1 block truncate font-mono text-muted-foreground text-xs">
+                          {p.model || "Automatic model discovery"}
+                        </code>
                       </div>
                     </div>
 

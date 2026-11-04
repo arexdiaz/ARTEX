@@ -79,6 +79,7 @@ func (s *Server) pgCreateConversation(w http.ResponseWriter, r *http.Request) {
 		AgentKey     string `json:"agent_key"`
 		Title        string `json:"title"`
 		LLMProfileID *int64 `json:"llm_profile_id"`
+		db.ConversationModel
 	}
 	if !decodeConversationRequest(w, r, &req) {
 		return
@@ -101,11 +102,9 @@ func (s *Server) pgCreateConversation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "agent not found")
 		return
 	}
-	if req.LLMProfileID != nil {
-		if _, ok := s.loadProfileConfig(*req.LLMProfileID); !ok {
-			writeErr(w, 400, "The specified LLM profile does not exist or is not usable (no API key for the key-requiring formats)")
-			return
-		}
+	if err := s.validateConversationModel(req.LLMProfileID, &req.ConversationModel); err != nil {
+		writeErr(w, 400, err.Error())
+		return
 	}
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
@@ -115,7 +114,7 @@ func (s *Server) pgCreateConversation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Sprintf("Title must be at most %d characters", maxConversationTitleRunes))
 		return
 	}
-	c, err := pg.CreateConversation(req.AgentKey, title, req.LLMProfileID)
+	c, err := pg.CreateConversation(req.AgentKey, title, req.LLMProfileID, req.ConversationModel)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -130,17 +129,16 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		LLMProfileID *int64 `json:"llm_profile_id"` // null clears the override
+		db.ConversationModel
 	}
 	if !decodeConversationRequest(w, r, &req) {
 		return
 	}
-	if req.LLMProfileID != nil {
-		if _, ok := s.loadProfileConfig(*req.LLMProfileID); !ok {
-			writeErr(w, 400, "The specified LLM profile does not exist or is not usable (no API key for the key-requiring formats)")
-			return
-		}
+	if err := s.validateConversationModel(req.LLMProfileID, &req.ConversationModel); err != nil {
+		writeErr(w, 400, err.Error())
+		return
 	}
-	if err := pg.UpdateConversationProfile(c.ID, req.LLMProfileID); err != nil {
+	if err := pg.UpdateConversationModel(c.ID, req.LLMProfileID, req.ConversationModel); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
