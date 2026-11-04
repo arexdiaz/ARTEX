@@ -63,7 +63,7 @@ func (s *Server) poolMember(p *db.LLMProfile, rank int) *llmpool.Member {
 		return nil
 	}
 	return &llmpool.Member{
-		ID: p.ID, Name: p.Name, Model: p.Model, Format: p.Format,
+		ID: p.ID, Name: p.Name, Model: p.ResolvedModel(), Format: p.Format,
 		Priority: p.Priority, Active: p.IsDefault, Rank: rank,
 		WindowTokens: cfg.CompactionWindow(), Prov: prov,
 	}
@@ -101,7 +101,7 @@ func (s *Server) poolChain(headID int64, headProv llm.Provider, headCfg agent.Co
 		}
 	}
 	members := []*llmpool.Member{{
-		ID: head.ID, Name: head.Name, Model: head.Model, Format: head.Format,
+		ID: head.ID, Name: head.Name, Model: head.ResolvedModel(), Format: head.Format,
 		Priority: head.Priority, Active: head.IsDefault, Rank: llmpool.RankActive,
 		WindowTokens: headCfg.CompactionWindow(), Prov: headProv,
 	}}
@@ -199,7 +199,7 @@ func (s *Server) llmPoolStatus() map[string]any {
 	for _, p := range all {
 		st := health[p.ID]
 		m := LLMPoolMemberStatus{
-			ProfileID: i64s(p.ID), Name: p.Name, Model: p.Model, Format: p.Format,
+			ProfileID: i64s(p.ID), Name: p.Name, Model: p.ResolvedModel(), Format: p.Format,
 			Priority: p.Priority, Active: p.IsDefault, Excluded: p.PoolExclude,
 			State: "ok", Fails: st.Fails, Trips: st.Trips,
 			LastError: st.LastError,

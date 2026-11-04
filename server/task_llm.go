@@ -167,11 +167,8 @@ type taskLLMStreamHooks struct {
 	transition func(taskLLMSelection, db.TaskLLMTransition, error)
 }
 
-// current resolves the provider this role runs on, by precedence:
-// Agent binding → task LLM profile chain → global/environment configuration.
-// Binding wins over the task chain: a role explicitly assigned a model keeps running
-// on that model; only when the binding is missing or fails to build does it fall back
-// to the task chain, and to the global configuration when the chain is empty.
+// current uses the task's saved model choice before role bindings. Legacy tasks
+// without saved selections retain agent binding → chain → global precedence.
 // The returned profile id is non-zero only on the task-chain path — streamTaskLLM uses it to decide whether a quota error should advance the task's failover state (binding/global paths leave the chain state untouched, preserving existing semantics).
 func (r *taskLLMRuntime) current() (taskLLMSelection, error) {
 	return r.currentFor(context.Background())
@@ -196,9 +193,11 @@ func (r *taskLLMRuntime) currentFor(ctx context.Context) (taskLLMSelection, erro
 	r.s.syncTaskLLMState(pt)
 	t, _ := r.s.m.Task(r.taskID)
 	sel := taskLLMSelection{task: t, revision: pt.LLMChainRevision}
-	if prov, cfg, ok := r.s.agentBindingProvider(r.agentKey); ok {
-		sel.provider, sel.retry = prov, cfg.Retry
-		return sel, nil
+	if len(pt.LLMSelections) == 0 {
+		if prov, cfg, ok := r.s.agentBindingProvider(r.agentKey); ok {
+			sel.provider, sel.retry = prov, cfg.Retry
+			return sel, nil
+		}
 	}
 	if len(pt.LLMProfileIDs) > 0 {
 		if pt.ActiveLLMProfileID == nil {
@@ -213,7 +212,7 @@ func (r *taskLLMRuntime) currentFor(ctx context.Context) (taskLLMSelection, erro
 				}
 			}
 		}
-		prov, cfg, ok := r.s.providerForProfile(sel.profileID)
+		prov, cfg, ok := r.s.providerForTaskSelection(pt.LLMSelections, sel.profileID)
 		if !ok {
 			return sel, fmt.Errorf("LLM profile #%d is missing or invalid", sel.profileID)
 		}
@@ -229,7 +228,7 @@ func (r *taskLLMRuntime) currentFor(ctx context.Context) (taskLLMSelection, erro
 }
 
 // activeCfg resolves the task's currently-active LLM config, mirroring current()'s
-// source precedence (agent binding → active chain profile → global). Read-only and
+// source precedence. Read-only and
 // best-effort: ok=false when nothing resolves, leaving the per-setting fallback to
 // the caller. If failover switches profiles, the change takes effect on the next
 // agent run (a fresh Session is built per run in captureRun).
@@ -242,11 +241,13 @@ func (r *taskLLMRuntime) activeCfg() (agent.Config, bool) {
 	if err != nil || pt == nil {
 		return agent.Config{}, false
 	}
-	if _, cfg, ok := r.s.agentBindingProvider(r.agentKey); ok {
-		return cfg, true
+	if len(pt.LLMSelections) == 0 {
+		if _, cfg, ok := r.s.agentBindingProvider(r.agentKey); ok {
+			return cfg, true
+		}
 	}
 	if len(pt.LLMProfileIDs) > 0 && pt.ActiveLLMProfileID != nil {
-		if _, cfg, ok := r.s.providerForProfile(*pt.ActiveLLMProfileID); ok {
+		if _, cfg, ok := r.s.providerForTaskSelection(pt.LLMSelections, *pt.ActiveLLMProfileID); ok {
 			return cfg, true
 		}
 	}
@@ -579,12 +580,19 @@ func isRetryableStreamError(err error) bool {
 // CompactionWindow mirrors current()'s precedence so the context window always
 // matches the provider the role will actually stream on.
 func (r *taskLLMRuntime) CompactionWindow() int {
-	if _, cfg, ok := r.s.agentBindingProvider(r.agentKey); ok {
-		return cfg.CompactionWindow()
-	}
+
 	taskNum, err := parseTaskID(r.taskID)
 	if err != nil {
 		return (agent.Config{}).CompactionWindow()
+	}
+	task, err := r.s.m.pg.GetTask(taskNum)
+	if err != nil || task == nil {
+		return (agent.Config{}).CompactionWindow()
+	}
+	if len(task.LLMSelections) == 0 {
+		if _, cfg, ok := r.s.agentBindingProvider(r.agentKey); ok {
+			return cfg.CompactionWindow()
+		}
 	}
 	chain, err := r.s.m.pg.TaskLLMProfiles(taskNum)
 	if err != nil {
@@ -598,7 +606,7 @@ func (r *taskLLMRuntime) CompactionWindow() int {
 	}
 	minimum := 0
 	for _, entry := range chain {
-		if cfg, ok := r.s.loadProfileConfig(entry.ProfileID); ok {
+		if _, cfg, ok := r.s.providerForTaskSelection(task.LLMSelections, entry.ProfileID); ok {
 			window := cfg.CompactionWindow()
 			if minimum == 0 || window < minimum {
 				minimum = window
@@ -652,14 +660,16 @@ func (s *Server) taskRuntimeAvailable(t *Task, agentKeys ...string) bool {
 	unboundReady := false
 	if len(state.ProfileIDs) > 0 {
 		if state.ActiveID != nil {
-			_, _, unboundReady = s.providerForProfile(*state.ActiveID)
+			_, _, unboundReady = s.providerForTaskSelection(state.Selections, *state.ActiveID)
 		}
 	} else {
 		_, _, unboundReady = s.globalProvider()
 	}
 	for _, key := range agentKeys {
-		if _, _, ok := s.agentBindingProvider(key); ok {
-			continue
+		if len(state.Selections) == 0 {
+			if _, _, ok := s.agentBindingProvider(key); ok {
+				continue
+			}
 		}
 		if !unboundReady {
 			return false
@@ -738,7 +748,7 @@ func (s *Server) syncTaskLLMState(pt *db.Task) {
 	id := fmt.Sprintf("%d", pt.ID)
 	s.m.mu.Lock()
 	if task := s.m.tasks[id]; task != nil {
-		task.setLLMState(pt.LLMProfileID, pt.ActiveLLMProfileID, pt.LLMProfileIDs, pt.LLMChainRevision, pt.LLMFailoverState, pt.LLMFailoverReason)
+		task.setLLMState(pt.LLMProfileID, pt.ActiveLLMProfileID, pt.LLMProfileIDs, pt.LLMChainRevision, pt.LLMFailoverState, pt.LLMFailoverReason, pt.LLMSelections)
 	}
 	s.m.mu.Unlock()
 }
@@ -747,10 +757,11 @@ func (s *Server) emitTaskLLMTransition(t *Task, transition db.TaskLLMTransition,
 	if t == nil {
 		return
 	}
-	previous := s.llmAuditProfile(transition.PreviousProfileID)
+	choices := t.llmStateSnapshot().Selections
+	previous := s.llmAuditProfile(transition.PreviousProfileID, choices)
 	var next *llmAuditProfile
 	if transition.NextProfileID != nil {
-		next = s.llmAuditProfile(*transition.NextProfileID)
+		next = s.llmAuditProfile(*transition.NextProfileID, choices)
 	}
 	mode := "automatic"
 	kind := "llm_switch"
@@ -769,7 +780,7 @@ func (s *Server) emitTaskLLMTransition(t *Task, transition db.TaskLLMTransition,
 	log.Printf("[llm-failover] task %s: %s", t.ID, summary)
 }
 
-func (s *Server) llmAuditProfile(id int64) *llmAuditProfile {
+func (s *Server) llmAuditProfile(id int64, selections ...[]db.TaskModelSelection) *llmAuditProfile {
 	if id <= 0 || s.m == nil || s.m.pg == nil {
 		return nil
 	}
@@ -777,7 +788,16 @@ func (s *Server) llmAuditProfile(id int64) *llmAuditProfile {
 	if err != nil || p == nil {
 		return &llmAuditProfile{ID: id, Name: fmt.Sprintf("profile #%d", id)}
 	}
-	return &llmAuditProfile{ID: p.ID, Name: p.Name, Format: p.Format, Model: p.Model}
+	model := p.ResolvedModel()
+	if len(selections) > 0 {
+		for _, choice := range selections[0] {
+			if choice.ProfileID == id {
+				model = choice.Model
+				break
+			}
+		}
+	}
+	return &llmAuditProfile{ID: p.ID, Name: p.Name, Format: p.Format, Model: model}
 }
 
 func llmAuditProfileLabel(profile *llmAuditProfile) string {
@@ -809,13 +829,14 @@ func sameOptionalID(a, b *int64) bool {
 }
 
 func (s *Server) emitManualTaskLLMSwitch(t *Task, previousID, nextID *int64) db.Activity {
+	choices := t.llmStateSnapshot().Selections
 	previous := (*llmAuditProfile)(nil)
 	next := (*llmAuditProfile)(nil)
 	if previousID != nil {
-		previous = s.llmAuditProfile(*previousID)
+		previous = s.llmAuditProfile(*previousID, choices)
 	}
 	if nextID != nil {
-		next = s.llmAuditProfile(*nextID)
+		next = s.llmAuditProfile(*nextID, choices)
 	}
 	summary := fmt.Sprintf("user manually switched the task LLM from %s to %s", llmAuditProfileLabel(previous), llmAuditProfileLabel(next))
 	metadata, _ := json.Marshal(llmActivityMetadata{LLMTransition: llmTransitionAudit{

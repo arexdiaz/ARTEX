@@ -8,13 +8,15 @@ import (
 )
 
 type taskLLMResolution struct {
-	ProfileID *int64 `json:"profile_id,omitempty"`
-	Name      string `json:"name"`
-	Format    string `json:"format"`
-	Model     string `json:"model"`
-	Source    string `json:"source"`
-	Available bool   `json:"available"`
-	Reason    string `json:"reason,omitempty"`
+	ProfileID       *int64 `json:"profile_id,omitempty"`
+	Name            string `json:"name"`
+	Format          string `json:"format"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoning_effort"`
+	ThinkingType    string `json:"thinking_type"`
+	Source          string `json:"source"`
+	Available       bool   `json:"available"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 func (s *Server) resolutionFromProfile(p *db.LLMProfile, source string) taskLLMResolution {
@@ -23,11 +25,12 @@ func (s *Server) resolutionFromProfile(p *db.LLMProfile, source string) taskLLMR
 	}
 	id := p.ID
 	result := taskLLMResolution{
-		ProfileID: &id,
-		Name:      p.Name,
-		Format:    p.Format,
-		Model:     p.Model,
-		Source:    source,
+		ProfileID:       &id,
+		Name:            p.Name,
+		Format:          p.Format,
+		Model:           p.ResolvedModel(),
+		ReasoningEffort: p.ReasoningEffort, ThinkingType: p.ThinkingType,
+		Source: source,
 	}
 	// Ollama profiles are keyless by design; the other formats need a key.
 	if p.APIKey == "" && p.Format != "ollama" {
@@ -42,18 +45,18 @@ func (s *Server) resolutionFromProfile(p *db.LLMProfile, source string) taskLLMR
 	return result
 }
 
-// resolveTaskRoleLLM mirrors taskLLMRuntime.current without creating a provider:
-// role Agent binding -> explicit task chain -> active/global environment config.
+// resolveTaskRoleLLM mirrors taskLLMRuntime.current, including saved task choices.
 // Database failures are returned rather than represented as an unavailable model.
 func (s *Server) resolveTaskRoleLLM(t *Task, agentKey string) (taskLLMResolution, error) {
 	if s == nil || s.m == nil || s.m.pg == nil {
 		return taskLLMResolution{}, fmt.Errorf("database unavailable")
 	}
+	state := t.llmStateSnapshot()
 	a, err := s.m.pg.GetAgentByKey(agentKey)
 	if err != nil {
 		return taskLLMResolution{}, fmt.Errorf("load agent %q: %w", agentKey, err)
 	}
-	if a != nil && a.LLMProfileID != nil {
+	if a != nil && a.LLMProfileID != nil && len(state.Selections) == 0 {
 		p, err := s.m.pg.ProfileByID(*a.LLMProfileID)
 		if err != nil {
 			return taskLLMResolution{}, fmt.Errorf("load agent LLM profile: %w", err)
@@ -65,7 +68,6 @@ func (s *Server) resolveTaskRoleLLM(t *Task, agentKey string) (taskLLMResolution
 			}
 		}
 	}
-	state := t.llmStateSnapshot()
 	if len(state.ProfileIDs) > 0 {
 		if state.ActiveID == nil {
 			return taskLLMResolution{Source: "task_chain", Reason: "task LLM profile chain quota exhausted"}, nil
@@ -73,6 +75,14 @@ func (s *Server) resolveTaskRoleLLM(t *Task, agentKey string) (taskLLMResolution
 		p, err := s.m.pg.ProfileByID(*state.ActiveID)
 		if err != nil {
 			return taskLLMResolution{}, fmt.Errorf("load task LLM profile: %w", err)
+		}
+		if len(state.Selections) > 0 && p != nil {
+			_, cfg, ok := s.providerForTaskSelection(state.Selections, p.ID)
+			result := taskLLMResolution{ProfileID: &p.ID, Name: p.Name, Format: p.Format, Model: cfg.Model, ReasoningEffort: cfg.ReasoningEffort, ThinkingType: cfg.ThinkingType, Source: "task_chain", Available: ok}
+			if !ok {
+				result.Reason = "saved task model is unavailable"
+			}
+			return result, nil
 		}
 		return s.resolutionFromProfile(p, "task_chain"), nil
 	}
@@ -95,6 +105,7 @@ func (s *Server) resolveTaskRoleLLM(t *Task, agentKey string) (taskLLMResolution
 		}
 		return taskLLMResolution{
 			Name: name, Format: cfg.Provider(), Model: cfg.Model,
+			ReasoningEffort: cfg.ReasoningEffort, ThinkingType: cfg.ThinkingType,
 			Source: "environment", Available: true,
 		}, nil
 	}

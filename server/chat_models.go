@@ -30,7 +30,7 @@ func (s *Server) activeProfileNeedsModel() bool {
 		return false
 	}
 	p, err := s.m.pg.ActiveProfile()
-	return err == nil && p != nil && strings.TrimSpace(p.Model) == ""
+	return err == nil && p != nil && p.ResolvedModel() == ""
 }
 
 func (s *Server) validateConversationModel(id *int64, choice *db.ConversationModel) error {
@@ -53,14 +53,14 @@ func (s *Server) validateConversationModel(id *int64, choice *db.ConversationMod
 	return nil
 }
 
-func (s *Server) loadChatProfileConfig(id int64, model string, effort *string) (agent.Config, string, bool) {
+func (s *Server) loadChatProfileConfig(id int64, model string, effort *string, thinking ...string) (agent.Config, string, bool) {
 	p, err := s.m.pg.ProfileByID(id)
 	if err != nil || p == nil {
 		return agent.Config{}, "", false
 	}
 	configured := strings.TrimSpace(p.Model)
 	if model == "" {
-		model = configured
+		model = p.ResolvedModel()
 	}
 	if model == "" || (configured != "" && model != configured) {
 		return agent.Config{}, "", false
@@ -74,12 +74,18 @@ func (s *Server) loadChatProfileConfig(id int64, model string, effort *string) (
 			return cfg, p.Name, false
 		}
 		cfg.ReasoningEffort = *effort
+		if *effort == "" {
+			cfg.ThinkingType = ""
+		}
 		if *effort == "off" {
 			cfg.ThinkingType, cfg.ReasoningEffort = "disabled", ""
 		}
 		if *effort != "" && *effort != "off" && *effort != "none" && cfg.ThinkingType == "disabled" {
 			cfg.ThinkingType = ""
 		}
+	}
+	if len(thinking) > 0 {
+		cfg.ThinkingType = thinking[0]
 	}
 	cfg.Stream = p.Streaming
 	cfg.MaxTokens, cfg.MaxTokensField = p.MaxTokens, p.MaxTokensField
@@ -92,6 +98,7 @@ type profileModelKey struct {
 	ID                            int64
 	Model, Effort, Thinking       string
 	ExplicitModel, ExplicitEffort bool
+	ExplicitThinking              bool
 }
 type profileProviderContextKey struct{}
 
@@ -115,15 +122,15 @@ func (p profileModelProvider) Complete(ctx context.Context, req llm.CompletionRe
 	return p.shared.Complete(context.WithValue(ctx, profileProviderContextKey{}, p.concrete), req)
 }
 
-func (s *Server) providerForChatModel(id int64, model string, effort *string) (llm.Provider, agent.Config, bool) {
+func (s *Server) providerForChatModel(id int64, model string, effort *string, thinking ...string) (llm.Provider, agent.Config, bool) {
 	s.provCacheMu.Lock()
 	generation := s.provCacheGen
 	s.provCacheMu.Unlock()
-	cfg, name, ok := s.loadChatProfileConfig(id, model, effort)
+	cfg, name, ok := s.loadChatProfileConfig(id, model, effort, thinking...)
 	if !ok {
 		return nil, cfg, false
 	}
-	key := profileModelKey{id, cfg.Model, cfg.ReasoningEffort, cfg.ThinkingType, model != "", effort != nil}
+	key := profileModelKey{id, cfg.Model, cfg.ReasoningEffort, cfg.ThinkingType, model != "", effort != nil, len(thinking) > 0}
 	s.provCacheMu.Lock()
 	if cached := s.provByModel[key]; cached != nil && generation == s.provCacheGen {
 		s.provCacheMu.Unlock()
@@ -139,7 +146,7 @@ func (s *Server) providerForChatModel(id int64, model string, effort *string) (l
 	s.provCacheMu.Lock()
 	if generation != s.provCacheGen {
 		s.provCacheMu.Unlock()
-		return s.providerForChatModel(id, model, effort)
+		return s.providerForChatModel(id, model, effort, thinking...)
 	}
 	defer s.provCacheMu.Unlock()
 	if cached := s.provByModel[key]; cached != nil {
@@ -158,6 +165,9 @@ func (s *Server) providerForChatModel(id int64, model string, effort *string) (l
 	identity := sideModel(cfg, id, name)
 	if model != "" || effort != nil {
 		identity.Selection = &sidequestion.ModelSelection{Model: model, ReasoningEffort: effort}
+		if len(thinking) > 0 {
+			identity.Selection.ThinkingType = &thinking[0]
+		}
 	}
 	prov = sidequestion.Bind(prov, identity)
 	entry := &provEntry{prov: prov, cfg: cfg}

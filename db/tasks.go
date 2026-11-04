@@ -28,19 +28,20 @@ type Task struct {
 	LLMProfileID  *int64     `json:"llm_profile_id,omitempty"`
 	// Task-level ordered LLM chain. LLMProfileID remains the compatibility alias
 	// for ActiveLLMProfileID while older API clients still send one profile id.
-	LLMProfileIDs      []int64    `json:"llm_profile_ids,omitempty"`
-	ActiveLLMProfileID *int64     `json:"active_llm_profile_id,omitempty"`
-	LLMChainRevision   int64      `json:"-"`
-	LLMFailoverState   string     `json:"llm_failover_state,omitempty"`
-	LLMFailoverReason  string     `json:"llm_failover_reason,omitempty"`
+	LLMProfileIDs      []int64              `json:"llm_profile_ids,omitempty"`
+	LLMSelections      []TaskModelSelection `json:"llm_selections,omitempty"`
+	ActiveLLMProfileID *int64               `json:"active_llm_profile_id,omitempty"`
+	LLMChainRevision   int64                `json:"-"`
+	LLMFailoverState   string               `json:"llm_failover_state,omitempty"`
+	LLMFailoverReason  string               `json:"llm_failover_reason,omitempty"`
 	// LLMRotate: per-intent chain-head rotation switch (#85); false = classic
 	// ordered failover from the active head.
-	LLMRotate bool `json:"llm_rotate"`
-	SourceTaskIDs      []int64    `json:"source_task_ids,omitempty"`
-	CompanyIDs         []int64    `json:"company_ids,omitempty"`
-	ParentRef          string     `json:"parent_ref,omitempty"` // parent task id (recorded by orchestration spawn; empty=top level)
-	CreatedAt          time.Time  `json:"created_at"`
-	CompletedAt        *time.Time `json:"completed_at,omitempty"` // when it entered a terminal state (done/failed/timeout); nil for non-terminal
+	LLMRotate     bool       `json:"llm_rotate"`
+	SourceTaskIDs []int64    `json:"source_task_ids,omitempty"`
+	CompanyIDs    []int64    `json:"company_ids,omitempty"`
+	ParentRef     string     `json:"parent_ref,omitempty"` // parent task id (recorded by orchestration spawn; empty=top level)
+	CreatedAt     time.Time  `json:"created_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"` // when it entered a terminal state (done/failed/timeout); nil for non-terminal
 	// Task-level timeout (see the task-level timeout and wrap-up design doc).
 	TimeoutSeconds int        `json:"timeout_seconds"`        // 0=no time limit
 	FirstRunAt     *time.Time `json:"first_run_at,omitempty"` // when it first actually started running (not created_at); nil=not yet run
@@ -158,6 +159,7 @@ type TaskCreateOptions struct {
 	SourceTaskIDs        []int64
 	CompanyIDs           []int64
 	LLMProfileIDs        []int64
+	LLMSelections        []TaskModelSelection
 	TimeoutSeconds       int
 	PlanHeartbeatSeconds int
 	// PlanQuietMode is the per-task quiet-mode switch; nil = default on (#86).
@@ -241,6 +243,7 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		Description: description, Goal: goal, ExplorationID: expID,
 		LLMProfileID: active, ActiveLLMProfileID: active,
 		LLMProfileIDs:  append([]int64(nil), opts.LLMProfileIDs...),
+		LLMSelections:  append([]TaskModelSelection(nil), opts.LLMSelections...),
 		SourceTaskIDs:  append([]int64(nil), opts.SourceTaskIDs...),
 		CompanyIDs:     append([]int64(nil), opts.CompanyIDs...),
 		TimeoutSeconds: opts.TimeoutSeconds, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
@@ -263,7 +266,7 @@ RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, descripti
 	if err := insertTaskCompanies(tx, t.ID, opts.CompanyIDs); err != nil {
 		return nil, err
 	}
-	if err := insertTaskLLMProfiles(tx, t.ID, opts.LLMProfileIDs); err != nil {
+	if err := insertTaskLLMProfiles(tx, t.ID, opts.LLMProfileIDs, opts.LLMSelections); err != nil {
 		return nil, err
 	}
 	if err := insertTaskInterceptRules(tx, t.ID, opts.InterceptRules); err != nil {
@@ -354,7 +357,7 @@ SELECT $1, id FROM tasks WHERE id=$2 AND deleted_at IS NULL`, taskID, sourceID)
 	return nil
 }
 
-func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
+func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64, choices ...[]TaskModelSelection) error {
 	seen := map[int64]bool{}
 	for position, profileID := range profileIDs {
 		if profileID <= 0 || seen[profileID] {
@@ -363,6 +366,15 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 		seen[profileID] = true
 		if _, err := tx.Exec(`INSERT INTO task_llm_profiles(task_id, profile_id, position) VALUES ($1,$2,$3)`, taskID, profileID, position); err != nil {
 			return err
+		}
+		if len(choices) > 0 {
+			for _, choice := range choices[0] {
+				if choice.ProfileID == profileID {
+					if _, err := tx.Exec(`UPDATE task_llm_profiles SET model=$3,reasoning_effort=$4,thinking_type=$5 WHERE task_id=$1 AND profile_id=$2`, taskID, profileID, choice.Model, choice.ReasoningEffort, choice.ThinkingType); err != nil {
+						return err
+					}
+				}
+			}
 		}
 	}
 	return nil

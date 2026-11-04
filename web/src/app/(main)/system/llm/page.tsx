@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { ProviderModelSelect } from "@/components/provider-model-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,8 @@ const MAX_TOKENS_FIELD_HINTS: Record<string, string> = {
   openai:
     "Which key carries the cap. max_tokens is the default and the vast majority of compatible gateways only accept it; OpenAI's official reasoning models (the o series / GPT-5) conversely only accept max_completion_tokens and fail outright with unsupported_parameter when they receive max_tokens.",
   anthropic: "Only selectable for the openai format. Anthropic's field name is fixed as max_tokens.",
-  "openai-responses": "Only selectable for the openai format. The Responses API's field name is fixed as max_output_tokens.",
+  "openai-responses":
+    "Only selectable for the openai format. The Responses API's field name is fixed as max_output_tokens.",
   ollama: "Only selectable for the openai format. Ollama's field name is fixed as max_tokens.",
 };
 // LLM profile formats. The default in the create form is "anthropic"; "ollama" is the
@@ -171,8 +173,8 @@ function PoolSheet({
             <ZapIcon className="size-4" /> LLM Pool · Failover
           </SheetTitle>
           <SheetDescription>
-            When enabled, an Agent <b>without a pinned model</b> automatically fails over to the next config when the current one is unusable (insufficient balance / dead Key / rate limiting /
-            service error).
+            When enabled, an Agent <b>without a pinned model</b> automatically fails over to the next config when the
+            current one is unusable (insufficient balance / dead Key / rate limiting / service error).
           </SheetDescription>
         </SheetHeader>
 
@@ -180,7 +182,9 @@ function PoolSheet({
           <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
             <div className="grid gap-0.5">
               <Label className="text-sm">Enable pool</Label>
-              <p className="text-muted-foreground text-xs">Off by default. When off, only the active profile is ever used and a failure stays a failure.</p>
+              <p className="text-muted-foreground text-xs">
+                Off by default. When off, only the active profile is ever used and a failure stays a failure.
+              </p>
             </div>
             <Switch
               checked={enabled}
@@ -196,8 +200,9 @@ function PoolSheet({
                 <div className="grid gap-0.5">
                   <Label className="text-sm">Also fall back when a pinned config fails</Label>
                   <p className="text-muted-foreground text-xs">
-                    Off by default: when an Agent or task pins a config, only that config is used and a failure stays a failure (no silent switch to another model).
-                    When enabled, a failing pinned config also falls back to the pool chain below.
+                    Off by default: when an Agent or task pins a config, only that config is used and a failure stays a
+                    failure (no silent switch to another model). When enabled, a failing pinned config also falls back
+                    to the pool chain below.
                   </p>
                 </div>
                 <Switch
@@ -221,8 +226,8 @@ function PoolSheet({
                 </div>
                 {inChain.length < 2 && (
                   <p className="text-muted-foreground text-xs">
-                    Only {inChain.length} usable profile(s) right now, so the pool has no effect — at least 2 usable profiles (API Key set, or Ollama) with pool participation are
-                    required.
+                    Only {inChain.length} usable profile(s) right now, so the pool has no effect — at least 2 usable
+                    profiles (API Key set, or Ollama) with pool participation are required.
                   </p>
                 )}
                 {chain.map((m) => {
@@ -250,7 +255,9 @@ function PoolSheet({
                         {excluded && <Badge variant="outline">Excluded from pool</Badge>}
                         <div className="ml-auto flex items-center gap-2">
                           {m.state === "tripped" && m.cooldown_secs > 0 && (
-                            <span className="text-muted-foreground text-xs">Cooldown {cooldownText(m.cooldown_secs)}</span>
+                            <span className="text-muted-foreground text-xs">
+                              Cooldown {cooldownText(m.cooldown_secs)}
+                            </span>
                           )}
                           {m.state === "degraded" && (
                             <span className="text-muted-foreground text-xs">{m.fails} consecutive failures</span>
@@ -289,9 +296,10 @@ function PoolSheet({
               </div>
 
               <div className="rounded-lg border border-dashed p-3 text-muted-foreground text-xs leading-relaxed">
-                The active profile is always first; the rest follow priority from high to low (set per profile). After a failure a profile enters a cooldown (60s → 5min →
-                30min), is skipped while cooling down, and switches back automatically once recovered. Profiles whose context window cannot fit the current request are skipped. Agents
-                and tasks with a pinned model do not join the pool by default.
+                The active profile is always first; the rest follow priority from high to low (set per profile). After a
+                failure a profile enters a cooldown (60s → 5min → 30min), is skipped while cooling down, and switches
+                back automatically once recovered. Profiles whose context window cannot fit the current request are
+                skipped. Agents and tasks with a pinned model do not join the pool by default.
               </div>
             </>
           )}
@@ -320,6 +328,7 @@ function ProfileSheet({
   const [name, setName] = React.useState("");
   const [format, setFormat] = React.useState<ProfileFormat>("anthropic");
   const [model, setModel] = React.useState("");
+  const [defaultModel, setDefaultModel] = React.useState("");
   const [baseUrl, setBaseUrl] = React.useState("");
   const [proxy, setProxy] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
@@ -353,6 +362,7 @@ function ProfileSheet({
         : "anthropic",
     );
     setModel(profile?.model ?? "");
+    setDefaultModel(profile?.default_model ?? "");
     setBaseUrl(profile?.base_url ?? "");
     setProxy(profile?.proxy ?? "");
     setRps(String(profile?.rate_per_second ?? 0));
@@ -399,7 +409,7 @@ function ProfileSheet({
     if (testing) return;
     setTesting(true);
     try {
-      if (!model.trim()) {
+      if (!model.trim() && !defaultModel) {
         const result = await api.fetchLLMModels(format, baseUrl, apiKey, proxy, profileId);
         if (result.ok) toast.success("Connected; models are available for selection in chat");
         else toast.error(`Connection failed: ${result.error ?? "could not discover models"}`);
@@ -409,7 +419,7 @@ function ProfileSheet({
       // not when a task is already running. Pass the profile id: with the Key input left empty, the stored Key is used.
       const r = await api.testLLM(
         format,
-        model,
+        model.trim() || defaultModel,
         baseUrl,
         apiKey,
         proxy,
@@ -421,7 +431,7 @@ function ProfileSheet({
       );
       // Show the reply too: only when the model demonstrably spoke is this the same as working inside a session.
       if (r.ok)
-        toast.success(`Connected · ${r.latency_ms ?? "?"}ms · ${r.model ?? model}`, {
+        toast.success(`Connected · ${r.latency_ms ?? "?"}ms · ${r.model ?? (model.trim() || defaultModel)}`, {
           description: r.reply ? `Reply: ${r.reply}` : undefined,
         });
       else toast.error(`Connection failed: ${r.error ?? "unknown"}`);
@@ -438,6 +448,10 @@ function ProfileSheet({
       return;
     }
     if (saving) return;
+    if (profile?.is_default && !model.trim() && !defaultModel) {
+      toast.error("Choose a default model for the active provider");
+      return;
+    }
     setSaving(true);
     try {
       const { id } = await api.saveLLMProfile({
@@ -445,6 +459,7 @@ function ProfileSheet({
         name: name.trim(),
         format,
         model: model.trim(),
+        default_model: model.trim() ? "" : defaultModel,
         base_url: baseUrl.trim(),
         proxy: proxy.trim(),
         api_key: apiKey,
@@ -579,9 +594,28 @@ function ProfileSheet({
               </Popover>
             </div>
             <p className="text-muted-foreground text-xs">
-              Leave blank to choose any available model in chat. Set a model for task or agent defaults.
+              Leave blank to discover all available models. Choose a default below for tasks and agents.
             </p>
           </div>
+
+          {!model.trim() && (
+            <div className="grid gap-2">
+              <Label>Default model{profile?.is_default ? " (required)" : ""}</Label>
+              <ProviderModelSelect
+                value={defaultModel}
+                onChange={setDefaultModel}
+                disabled={saving}
+                loadModels={async () => {
+                  const result = await api.fetchLLMModels(format, baseUrl, apiKey, proxy, profileId);
+                  if (!result.ok) throw new Error(result.error || "Could not discover models");
+                  return result.models ?? [];
+                }}
+              />
+              <p className="text-muted-foreground text-xs">
+                Used when a task or agent does not choose a model. Required before making this the active provider.
+              </p>
+            </div>
+          )}
 
           <div className="grid gap-2">
             <Label htmlFor="p-base-url">Base URL (optional)</Label>
@@ -604,8 +638,9 @@ function ProfileSheet({
               onChange={(e) => setProxy(e.target.value)}
             />
             <p className="text-muted-foreground text-xs">
-              Only outbound LLM requests go through this proxy; http/https/socks5 are supported, optionally with credentials (e.g.
-              socks5://user:pass@host:port — URL-encode the password if it contains special characters). Leave empty for no proxy (direct connection).
+              Only outbound LLM requests go through this proxy; http/https/socks5 are supported, optionally with
+              credentials (e.g. socks5://user:pass@host:port — URL-encode the password if it contains special
+              characters). Leave empty for no proxy (direct connection).
             </p>
           </div>
 
@@ -619,16 +654,15 @@ function ProfileSheet({
               onChange={(e) => setSessionHeaderKey(e.target.value)}
             />
             <p className="text-muted-foreground text-xs">
-              Once a header name is set, every request carries this HTTP header, with the value filled in automatically as the <b>current session's session id</b> (chat sessions like
-              conv-12, workers like exp3-worker-i87). Meant for gateways that do prompt caching /
-              sticky routing on a session-id header; stable across turns of one session, distinct across sessions. Leave empty to not send it.
+              Once a header name is set, every request carries this HTTP header, with the value filled in automatically
+              as the <b>current session's session id</b> (chat sessions like conv-12, workers like exp3-worker-i87).
+              Meant for gateways that do prompt caching / sticky routing on a session-id header; stable across turns of
+              one session, distinct across sessions. Leave empty to not send it.
             </p>
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="p-api-key">
-              {format === "ollama" ? "API Key (optional for Ollama)" : "API Key"}
-            </Label>
+            <Label htmlFor="p-api-key">{format === "ollama" ? "API Key (optional for Ollama)" : "API Key"}</Label>
             <Input
               id="p-api-key"
               type="password"
@@ -661,8 +695,8 @@ function ProfileSheet({
             </div>
           </div>
           <p className="-mt-2 text-muted-foreground text-xs">
-            Rate limits of 0 mean unlimited, shared across all agents. The context window is in K (thousand tokens); 0 = the 200K default, capped at 1000 (i.e.
-            1M). Setting it too high keeps compression from ever triggering.
+            Rate limits of 0 mean unlimited, shared across all agents. The context window is in K (thousand tokens); 0 =
+            the 200K default, capped at 1000 (i.e. 1M). Setting it too high keeps compression from ever triggering.
           </p>
 
           <div className="grid gap-3 rounded-lg border p-3">
@@ -672,7 +706,8 @@ function ProfileSheet({
                   Pool priority
                 </Label>
                 <p className="text-muted-foreground text-xs">
-                  Higher numbers are picked first; the active profile is always first regardless of this value. Profiles with equal priority take turns leading, spreading quota naturally.
+                  Higher numbers are picked first; the active profile is always first regardless of this value. Profiles
+                  with equal priority take turns leading, spreading quota naturally.
                 </p>
               </div>
               <Input
@@ -687,8 +722,9 @@ function ProfileSheet({
               <div className="grid gap-0.5">
                 <Label className="text-sm">Excluded from pool</Label>
                 <p className="text-muted-foreground text-xs">
-                  When enabled, this profile is never used as a failover target (Agents / tasks can still pin it explicitly). Suited to expensive profiles reserved for one specific Agent
-                  that should not be burned through by other agents' failures.
+                  When enabled, this profile is never used as a failover target (Agents / tasks can still pin it
+                  explicitly). Suited to expensive profiles reserved for one specific Agent that should not be burned
+                  through by other agents' failures.
                 </p>
               </div>
               <Switch checked={poolExclude} onCheckedChange={setPoolExclude} aria-label="Excluded from pool" />
@@ -697,9 +733,10 @@ function ProfileSheet({
               <div className="grid gap-0.5">
                 <Label className="text-sm">Streaming output</Label>
                 <p className="text-muted-foreground text-xs">
-                  On (default) streams over SSE, with live in-flight progress and real-time token counting. Off uses true non-streaming (stream:false,
-                  returning the full response in one shot) — a way around gateways with broken SSE implementations (empty frames / dropped thinking-field frames),
-                  at the cost of losing live in-flight progress.
+                  On (default) streams over SSE, with live in-flight progress and real-time token counting. Off uses
+                  true non-streaming (stream:false, returning the full response in one shot) — a way around gateways
+                  with broken SSE implementations (empty frames / dropped thinking-field frames), at the cost of losing
+                  live in-flight progress.
                 </p>
               </div>
               <Switch checked={streaming} onCheckedChange={setStreaming} aria-label="Streaming output" />
@@ -713,9 +750,10 @@ function ProfileSheet({
                   Output cap · max tokens
                 </Label>
                 <p className="text-muted-foreground text-xs">
-                  How many tokens a single reply may generate at most; sent with every request. 0 (default) = the field is not sent, leaving it to the server default.
-                  This is not the same thing as the "context window" above: that is the model's total capacity, used only locally to compute the compression threshold.
-                  Set it too low and a reasoning model gets truncated mid-thinking, unable to emit even a one-word answer.
+                  How many tokens a single reply may generate at most; sent with every request. 0 (default) = the field
+                  is not sent, leaving it to the server default. This is not the same thing as the "context window"
+                  above: that is the model's total capacity, used only locally to compute the compression threshold. Set
+                  it too low and a reasoning model gets truncated mid-thinking, unable to emit even a one-word answer.
                 </p>
               </div>
               <Input
@@ -757,8 +795,9 @@ function ProfileSheet({
               <div className="grid gap-0.5">
                 <Label className="text-sm">Thinking switch · thinking.type</Label>
                 <p className="text-muted-foreground text-xs">
-                  Controls whether the thinking field is sent. Not sent = the field is omitted (compatible with models like MiniMax that lack support); Disabled = send
-                  disabled; Enabled = send enabled. Independent of the effort below.
+                  Controls whether the thinking field is sent. Not sent = the field is omitted (compatible with models
+                  like MiniMax that lack support); Disabled = send disabled; Enabled = send enabled. Independent of the
+                  effort below.
                 </p>
               </div>
               <Select value={thinkingType} onValueChange={setThinkingType}>
@@ -776,10 +815,10 @@ function ProfileSheet({
             </div>
             <div className="flex items-center justify-between gap-4 border-t pt-3">
               <div className="grid gap-0.5">
-                <Label className="text-sm">Thinking effort · reasoning_effort</Label>
+                <Label className="text-sm">Default reasoning effort</Label>
                 <p className="text-muted-foreground text-xs">
-                  A separate effort knob (OpenAI reasoning_effort / Anthropic output_config.effort). Some APIs have no thinking
-                  field and activate thinking via effort alone, so it can be set on its own without sending the thinking switch.
+                  Tasks and agents inherit this effort when they do not choose one. Some APIs have no thinking field and
+                  activate thinking via effort alone, so it can be set on its own without sending the thinking switch.
                 </p>
               </div>
               <Select value={effort} onValueChange={setEffort}>
@@ -822,6 +861,7 @@ export default function LLMPage() {
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
+  const [savingDefault, setSavingDefault] = React.useState<string | null>(null);
   // The drawer's open flag and its content are stored separately: editing stays put on close, otherwise during the closing animation the title would flash
   // from "Edit X" to "New". editing = null means create.
   const [editOpen, setEditOpen] = React.useState(false);
@@ -860,6 +900,11 @@ export default function LLMPage() {
   }, [pool]);
 
   async function activate(id: string, name: string) {
+    const profile = profiles.find((p) => p.id === id);
+    if (profile && !profile.model && !profile.default_model) {
+      toast.error("Choose a default model before activating this provider");
+      return;
+    }
     try {
       await api.activateLLMProfile(id);
       toast.success(`Activated: ${name}`);
@@ -891,7 +936,8 @@ export default function LLMPage() {
         <div>
           <h1 className="font-semibold text-xl tracking-tight">LLM</h1>
           <p className="text-muted-foreground text-sm">
-            Format / model / rate-limit settings shared by all agents. Click a card to edit it; the starred card is the active profile.
+            Format / model / rate-limit settings shared by all agents. Click a card to edit it; the starred card is the
+            active profile.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -960,6 +1006,44 @@ export default function LLMPage() {
                         </code>
                       </div>
                     </div>
+
+                    {!p.model && (
+                      // biome-ignore lint/a11y/noStaticElementInteractions: these controls handle their own interaction; stop events from opening the parent card editor.
+                      <div
+                        className="grid gap-1 pl-6"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
+                        <span className="text-muted-foreground text-xs">Default model</span>
+                        <ProviderModelSelect
+                          value={p.default_model || ""}
+                          label={`Default model for ${p.name}`}
+                          disabled={savingDefault === p.id}
+                          loadModels={async () => {
+                            const result = await api.fetchLLMModels(
+                              p.format,
+                              p.base_url || "",
+                              "",
+                              p.proxy || "",
+                              Number(p.id),
+                            );
+                            if (!result.ok) throw new Error(result.error || "Could not discover models");
+                            return result.models ?? [];
+                          }}
+                          onChange={(model) => {
+                            setSavingDefault(p.id);
+                            void api
+                              .setProviderDefaultModel(p.id, model)
+                              .then(() => {
+                                toast.success("Default model updated");
+                                return load();
+                              })
+                              .catch((e: Error) => toast.error(e.message))
+                              .finally(() => setSavingDefault(null));
+                          }}
+                        />
+                      </div>
+                    )}
 
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-muted-foreground text-xs">
                       {p.api_key_hint && <span>{p.api_key_hint}</span>}

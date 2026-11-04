@@ -191,11 +191,15 @@ func (s *Server) sideProvider(model sidequestion.Model) (llm.Provider, error) {
 	var ok bool
 	if model.ProfileID > 0 {
 		if model.Selection != nil {
-			current, _, exists := s.loadChatProfileConfig(model.ProfileID, model.Selection.Model, model.Selection.ReasoningEffort)
+			var thinking []string
+			if model.Selection.ThinkingType != nil {
+				thinking = []string{*model.Selection.ThinkingType}
+			}
+			current, _, exists := s.loadChatProfileConfig(model.ProfileID, model.Selection.Model, model.Selection.ReasoningEffort, thinking...)
 			if !exists || sideModel(current, model.ProfileID, model.Name).Identity != model.Identity {
 				return nil, errors.New("the model profile was deleted or changed; run the main Agent first to refresh the context")
 			}
-			p, cfg, ok = s.providerForChatModel(model.ProfileID, model.Selection.Model, model.Selection.ReasoningEffort)
+			p, cfg, ok = s.providerForChatModel(model.ProfileID, model.Selection.Model, model.Selection.ReasoningEffort, thinking...)
 		} else {
 			// Validate the persisted reference even if a previous provider is cached.
 			current, exists := s.loadProfileConfig(model.ProfileID)

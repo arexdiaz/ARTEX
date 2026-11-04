@@ -655,10 +655,10 @@ func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 		exhaustedAt, _ := row["exhausted_at"].(string)
 		createdAt, _ := row["created_at"].(string)
 		updatedAt, _ := row["updated_at"].(string)
-		if _, err := tx.Exec(`INSERT INTO task_llm_profiles(task_id,profile_id,position,status,last_error,exhausted_at,created_at,updated_at)
-	VALUES($1,$2,$3,$4,NULLIF($5,''),$6::timestamptz,COALESCE($7::timestamptz,now()),COALESCE($8::timestamptz,now()))
+		if _, err := tx.Exec(`INSERT INTO task_llm_profiles(task_id,profile_id,position,status,last_error,exhausted_at,created_at,updated_at,model,reasoning_effort,thinking_type)
+	VALUES($1,$2,$3,$4,NULLIF($5,''),$6::timestamptz,COALESCE($7::timestamptz,now()),COALESCE($8::timestamptz,now()),$9,$10,$11)
 	ON CONFLICT DO NOTHING`, taskID, profileID, position, status, lastError,
-			nilIfEmptyString(exhaustedAt), nilIfEmptyString(createdAt), nilIfEmptyString(updatedAt)); err != nil {
+			nilIfEmptyString(exhaustedAt), nilIfEmptyString(createdAt), nilIfEmptyString(updatedAt), row["model"], row["reasoning_effort"], row["thinking_type"]); err != nil {
 			return nil, err
 		}
 		position++

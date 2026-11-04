@@ -12,11 +12,27 @@ const IntentBlockedLLMQuota = "llm_quota_exhausted"
 
 // TaskLLMProfile is one ordered entry in a task's explicit failover chain.
 type TaskLLMProfile struct {
-	ProfileID   int64      `json:"profile_id"`
-	Position    int        `json:"position"`
-	Status      string     `json:"status"`
-	LastError   string     `json:"last_error,omitempty"`
-	ExhaustedAt *time.Time `json:"exhausted_at,omitempty"`
+	ProfileID   int64               `json:"profile_id"`
+	Position    int                 `json:"position"`
+	Status      string              `json:"status"`
+	LastError   string              `json:"last_error,omitempty"`
+	ExhaustedAt *time.Time          `json:"exhausted_at,omitempty"`
+	Selection   *TaskModelSelection `json:"selection,omitempty"`
+}
+
+// TaskModelSelection is a resolved choice, captured before a task is launched.
+type TaskModelSelection struct {
+	ProfileID       int64  `json:"profile_id"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoning_effort"`
+	ThinkingType    string `json:"thinking_type"`
+}
+
+func taskModelSelection(id int64, model, effort, thinking sql.NullString) *TaskModelSelection {
+	if !model.Valid || model.String == "" || !effort.Valid || !thinking.Valid {
+		return nil
+	}
+	return &TaskModelSelection{ProfileID: id, Model: model.String, ReasoningEffort: effort.String, ThinkingType: thinking.String}
 }
 
 // TaskSource identifies one directly related task and its exploration.
@@ -76,6 +92,7 @@ func applyTaskLLMContext(
 	t.ActiveLLMProfileID = activeProfileID
 	t.LLMChainRevision = revision
 	t.LLMProfileIDs = make([]int64, 0, len(chain))
+	t.LLMSelections = nil
 	t.LLMFailoverState = "default"
 	t.LLMFailoverReason = ""
 	var latest *TaskLLMProfile
@@ -83,6 +100,9 @@ func applyTaskLLMContext(
 	for i := range chain {
 		entry := chain[i]
 		t.LLMProfileIDs = append(t.LLMProfileIDs, entry.ProfileID)
+		if entry.Selection != nil {
+			t.LLMSelections = append(t.LLMSelections, *entry.Selection)
+		}
 		if t.ActiveLLMProfileID != nil && entry.ProfileID == *t.ActiveLLMProfileID && entry.Status == "ready" {
 			activeReady = true
 		}
@@ -137,7 +157,7 @@ func (d *DB) hydrateTasksContext(tasks []*Task) error {
 
 	rows, err := d.Query(`
 SELECT t.id, t.llm_profile_id, t.active_llm_profile_id, t.llm_chain_revision,
-       p.profile_id, p.position, p.status, COALESCE(p.last_error,''), p.exhausted_at
+       p.profile_id, p.position, p.status, COALESCE(p.last_error,''), p.exhausted_at, p.model, p.reasoning_effort, p.thinking_type
 FROM tasks t
 LEFT JOIN task_llm_profiles p ON p.task_id=t.id
 WHERE t.id=ANY($1::bigint[])
@@ -150,9 +170,10 @@ ORDER BY t.id, p.position NULLS LAST`, ids)
 		var legacy, active, profileID, position sql.NullInt64
 		var status, lastError sql.NullString
 		var exhaustedAt sql.NullTime
+		var model, effort, thinking sql.NullString
 		if err := rows.Scan(
 			&taskID, &legacy, &active, &revision,
-			&profileID, &position, &status, &lastError, &exhaustedAt,
+			&profileID, &position, &status, &lastError, &exhaustedAt, &model, &effort, &thinking,
 		); err != nil {
 			rows.Close()
 			return err
@@ -181,6 +202,7 @@ ORDER BY t.id, p.position NULLS LAST`, ids)
 				ts := exhaustedAt.Time
 				entry.ExhaustedAt = &ts
 			}
+			entry.Selection = taskModelSelection(entry.ProfileID, model, effort, thinking)
 			context.chain = append(context.chain, entry)
 		}
 	}
@@ -260,7 +282,7 @@ ORDER BY task_id, id`, ids)
 func (d *DB) taskLLMContext(taskID int64) (*int64, *int64, int64, []TaskLLMProfile, error) {
 	rows, err := d.Query(`
 SELECT t.llm_profile_id, t.active_llm_profile_id, t.llm_chain_revision,
-       p.profile_id, p.position, p.status, COALESCE(p.last_error,''), p.exhausted_at
+       p.profile_id, p.position, p.status, COALESCE(p.last_error,''), p.exhausted_at, p.model, p.reasoning_effort, p.thinking_type
 FROM tasks t
 LEFT JOIN task_llm_profiles p ON p.task_id=t.id
 WHERE t.id=$1
@@ -281,7 +303,8 @@ ORDER BY p.position NULLS LAST`, taskID)
 		var rowRevision int64
 		var status, lastError sql.NullString
 		var exhaustedAt sql.NullTime
-		if err := rows.Scan(&legacy, &active, &rowRevision, &profileID, &position, &status, &lastError, &exhaustedAt); err != nil {
+		var model, effort, thinking sql.NullString
+		if err := rows.Scan(&legacy, &active, &rowRevision, &profileID, &position, &status, &lastError, &exhaustedAt, &model, &effort, &thinking); err != nil {
 			return nil, nil, 0, nil, err
 		}
 		if !found {
@@ -309,6 +332,7 @@ ORDER BY p.position NULLS LAST`, taskID)
 			ts := exhaustedAt.Time
 			entry.ExhaustedAt = &ts
 		}
+		entry.Selection = taskModelSelection(entry.ProfileID, model, effort, thinking)
 		chain = append(chain, entry)
 	}
 	if err := rows.Err(); err != nil {
@@ -382,7 +406,7 @@ ORDER BY r.created_at, r.source_task_id`, taskID)
 }
 
 func (d *DB) TaskLLMProfiles(taskID int64) ([]TaskLLMProfile, error) {
-	rows, err := d.Query(`SELECT profile_id, position, status, COALESCE(last_error,''), exhausted_at
+	rows, err := d.Query(`SELECT profile_id, position, status, COALESCE(last_error,''), exhausted_at, model, reasoning_effort, thinking_type
 FROM task_llm_profiles WHERE task_id=$1 ORDER BY position`, taskID)
 	if err != nil {
 		return nil, err
@@ -391,9 +415,11 @@ FROM task_llm_profiles WHERE task_id=$1 ORDER BY position`, taskID)
 	var out []TaskLLMProfile
 	for rows.Next() {
 		var entry TaskLLMProfile
-		if err := rows.Scan(&entry.ProfileID, &entry.Position, &entry.Status, &entry.LastError, &entry.ExhaustedAt); err != nil {
+		var model, effort, thinking sql.NullString
+		if err := rows.Scan(&entry.ProfileID, &entry.Position, &entry.Status, &entry.LastError, &entry.ExhaustedAt, &model, &effort, &thinking); err != nil {
 			return nil, err
 		}
+		entry.Selection = taskModelSelection(entry.ProfileID, model, effort, thinking)
 		out = append(out, entry)
 	}
 	return out, rows.Err()
@@ -405,7 +431,7 @@ FROM task_llm_profiles WHERE task_id=$1 ORDER BY position`, taskID)
 // Terminal (done/failed/timeout) tasks may also edit the chain: after a task ends the
 // main agent conversation still uses this chain, so it must be replaceable when the
 // models on it become unavailable — otherwise a completed task could never be interacted with again.
-func (d *DB) ReplaceTaskLLMProfiles(taskID int64, profileIDs []int64, activeProfileID int64) error {
+func (d *DB) ReplaceTaskLLMProfiles(taskID int64, profileIDs []int64, activeProfileID int64, selections ...[]TaskModelSelection) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -424,7 +450,7 @@ func (d *DB) ReplaceTaskLLMProfiles(taskID int64, profileIDs []int64, activeProf
 	if _, err := tx.Exec(`DELETE FROM task_llm_profiles WHERE task_id=$1`, taskID); err != nil {
 		return err
 	}
-	if err := insertTaskLLMProfiles(tx, taskID, profileIDs); err != nil {
+	if err := insertTaskLLMProfiles(tx, taskID, profileIDs, selections...); err != nil {
 		return err
 	}
 	if len(profileIDs) == 0 {

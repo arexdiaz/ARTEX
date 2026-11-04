@@ -48,6 +48,7 @@ type Model struct {
 type ModelSelection struct {
 	Model           string  `json:"model"`
 	ReasoningEffort *string `json:"reasoning_effort"`
+	ThinkingType    *string `json:"thinking_type,omitempty"`
 }
 
 type Snapshot struct {

@@ -408,6 +408,12 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_one_default ON llm_profiles(is_default) WHERE is_default;
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS default_model TEXT NOT NULL DEFAULT '';
+-- Discovery-only providers from earlier versions must be completed before activation.
+UPDATE llm_profiles SET is_default=false WHERE is_default AND btrim(model)='' AND btrim(default_model)='';
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_active_model_check;
+ALTER TABLE llm_profiles ADD CONSTRAINT llm_profiles_active_model_check
+  CHECK (NOT is_default OR btrim(model)<>'' OR btrim(default_model)<>'');
 DROP TRIGGER IF EXISTS trg_llm_upd ON llm_profiles;
 CREATE TRIGGER trg_llm_upd BEFORE UPDATE ON llm_profiles
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -719,6 +725,9 @@ CREATE TABLE IF NOT EXISTS task_llm_profiles (
     UNIQUE (task_id, position)
 );
 CREATE INDEX IF NOT EXISTS idx_task_llm_profiles_order ON task_llm_profiles(task_id, position);
+ALTER TABLE task_llm_profiles ADD COLUMN IF NOT EXISTS model TEXT;
+ALTER TABLE task_llm_profiles ADD COLUMN IF NOT EXISTS reasoning_effort TEXT;
+ALTER TABLE task_llm_profiles ADD COLUMN IF NOT EXISTS thinking_type TEXT;
 CREATE INDEX IF NOT EXISTS idx_task_llm_profiles_profile ON task_llm_profiles(profile_id, task_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_llm_profile ON tasks(llm_profile_id) WHERE llm_profile_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_active_llm_profile ON tasks(active_llm_profile_id) WHERE active_llm_profile_id IS NOT NULL;

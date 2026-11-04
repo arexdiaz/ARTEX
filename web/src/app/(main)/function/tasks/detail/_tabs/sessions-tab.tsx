@@ -70,11 +70,9 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// resolutionLabel names the LLM a session runs on. The badge shows this alone and
-// keeps the model id in its tooltip. Env-backed configs can arrive without a name,
-// so fall back to the model id rather than rendering an empty badge.
+// Show the concrete task model even when a discovery provider's name is shared.
 function resolutionLabel(r: TaskLLMResolution): string {
-  return r.name || r.model || "Unnamed config";
+  return [r.name, r.model].filter(Boolean).join(" · ") || "Unnamed config";
 }
 
 // fmtBytes renders a human file size for attachment chips (mirrors transcript.tsx).
@@ -1776,7 +1774,7 @@ export function SessionsTab({ taskId, taskPaused = false }: { taskId: string; ta
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-xs [overflow-wrap:anywhere]">
                     {activeResolution.available
-                      ? [resolutionLabel(activeResolution), activeResolution.model].filter(Boolean).join(" / ")
+                      ? [resolutionLabel(activeResolution), activeResolution.thinking_type === "disabled" ? "Reasoning off" : activeResolution.reasoning_effort ? `Reasoning ${activeResolution.reasoning_effort}` : "Model default reasoning"].join(" / ")
                       : activeResolution.reason || "No available LLM config"}
                   </TooltipContent>
                 </Tooltip>

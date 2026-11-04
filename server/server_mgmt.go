@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -1851,6 +1850,50 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"profiles": llmProfileDTOs(ps)})
 }
 
+func (s *Server) pgSetProfileDefaultModel(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, 400, "invalid provider id")
+		return
+	}
+	var body struct {
+		Model string `json:"default_model"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	p, err := pg.ProfileByID(id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if p == nil {
+		writeErr(w, 404, "provider not found")
+		return
+	}
+	if p.Model != "" {
+		writeErr(w, 400, "this provider already uses a single configured model")
+		return
+	}
+	body.Model = strings.TrimSpace(body.Model)
+	if err := s.validateProviderModel(r.Context(), p, body.Model); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if err := pg.SetProfileDefaultModel(id, body.Model); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	s.invalidateProfileAgents()
+	s.reapplyActiveProfile()
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {
@@ -1872,12 +1915,32 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	p := body.LLMProfile
 	p.Name, p.Model = strings.TrimSpace(p.Name), strings.TrimSpace(p.Model)
+	p.DefaultModel = strings.TrimSpace(p.DefaultModel)
 	if p.Name == "" {
 		writeErr(w, 400, "profile name is required")
 		return
 	}
 	p.APIKey = body.APIKey
 	p.Streaming = body.Streaming == nil || *body.Streaming
+	var stored *db.LLMProfile
+	if p.ID > 0 {
+		stored, _ = pg.ProfileByID(p.ID)
+	}
+	if stored != nil && stored.IsDefault && p.ResolvedModel() == "" {
+		writeErr(w, 400, db.ErrLLMDefaultModelRequired.Error())
+		return
+	}
+	if p.Model == "" && p.DefaultModel != "" {
+		candidate := p
+		if candidate.APIKey == "" && stored != nil && sameLLMEndpoint(p.Format, p.BaseURL, stored.Format, stored.BaseURL) {
+			candidate.APIKey = stored.APIKey
+		}
+		if err := s.validateProviderModel(r.Context(), &candidate, p.DefaultModel); err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+	}
+
 	// Output cap: negative values are meaningless, clamp to zero (= do not send the
 	// field). The field-name switch only matters for Chat Completions — anthropic and
 	// openai-responses hard-code their field names; storing it would only mislead later readers, so it is cleared for any non-openai format. Unknown values are cleared too, to avoid throwing DB CHECK errors at the user.
@@ -1998,8 +2061,21 @@ func (s *Server) pgActivateProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if err := pg.SetActiveProfile(body.ID); err != nil {
+	profile, err := pg.ProfileByID(body.ID)
+	if err != nil {
 		writeErr(w, 500, err.Error())
+		return
+	}
+	if profile == nil {
+		writeErr(w, 404, "provider not found")
+		return
+	}
+	if err := s.validateProviderModel(r.Context(), profile, profile.ResolvedModel()); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if err := pg.SetActiveProfile(body.ID); err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
 	s.invalidateProfileAgents() // active change may affect pinned-task fallbacks
@@ -2082,111 +2158,12 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
-
-	// Candidate endpoints to try in order. Some Anthropic-compatible providers
-	// (e.g. DeepSeek) implement /v1/messages under an /anthropic path but expose
-	// the model list only on their OpenAI-format path — so for anthropic we fall
-	// back to the OpenAI endpoint at the stripped root.
-	type candidate struct {
-		url string
-		hdr http.Header
-	}
-	bearerHdr := func() http.Header {
-		h := http.Header{}
-		h.Set("Authorization", "Bearer "+apiKey)
-		return h
-	}
-	anthropicHdr := func() http.Header {
-		h := http.Header{}
-		h.Set("x-api-key", apiKey)
-		h.Set("anthropic-version", "2023-06-01")
-		return h
-	}
-
-	var candidates []candidate
-	switch provider {
-	case "openai", "openai-responses":
-		// Responses API shares the OpenAI model list at /v1/models; tolerate a full
-		// endpoint URL of either format.
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
-		}
-		b := strings.TrimRight(strings.TrimSuffix(strings.TrimSuffix(baseURL, "/chat/completions"), "/responses"), "/")
-		candidates = append(candidates, candidate{b + "/models", bearerHdr()})
-	case "ollama":
-		// OpenAI-compatible list at {base}/v1/models. Tolerate base URLs with or
-		// without the /v1 suffix (and a full endpoint URL). No auth needed; when a
-		// key was provided anyway, send it as Bearer (Ollama ignores it).
-		if baseURL == "" {
-			baseURL = agent.DefaultOllamaBaseURL
-		}
-		b := strings.TrimSuffix(baseURL, "/chat/completions")
-		if !strings.HasSuffix(b, "/v1") {
-			b += "/v1"
-		}
-		hdr := http.Header{}
-		if apiKey != "" {
-			hdr.Set("Authorization", "Bearer "+apiKey)
-		}
-		candidates = append(candidates, candidate{b + "/models", hdr})
-	default: // anthropic
-		if baseURL == "" {
-			baseURL = "https://api.anthropic.com"
-		}
-		b := strings.TrimRight(strings.TrimSuffix(baseURL, "/v1/messages"), "/")
-		candidates = append(candidates, candidate{b + "/v1/models", anthropicHdr()})
-		// Fallback for Anthropic-compatible third parties whose model list lives on
-		// the OpenAI path: strip a trailing /anthropic and try the OpenAI endpoint.
-		if root := strings.TrimRight(strings.TrimSuffix(b, "/anthropic"), "/"); root != b {
-			candidates = append(candidates,
-				candidate{root + "/models", bearerHdr()},
-				candidate{root + "/v1/models", bearerHdr()},
-			)
-		}
-	}
-
-	// Build HTTP client with optional proxy.
-	transport := &http.Transport{}
-	if p := strings.TrimSpace(req.Proxy); p != "" {
-		if pu, err := url.Parse(p); err == nil {
-			transport.Proxy = http.ProxyURL(pu)
-		}
-	}
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return fmt.Errorf("too many model catalog redirects")
-		}
-		if req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
-			return fmt.Errorf("model catalog redirect changed origin")
-		}
-		return nil
-	}}
-	defer transport.CloseIdleConnections()
-
-	// Try each candidate; return the first that yields a non-empty model list.
-	var lastErr string
-	emptyOK := false
-	for _, c := range candidates {
-		models, err := fetchModelCatalog(r.Context(), client, c.url, c.hdr)
-		if err != nil {
-			lastErr = err.Error()
-			continue
-		}
-		if len(models) > 0 {
-			writeJSON(w, 200, map[string]any{"ok": true, "models": models})
-			return
-		}
-		emptyOK = true // 200 but no model ids — keep trying other candidates
-	}
-	if emptyOK {
-		writeJSON(w, 200, map[string]any{"ok": true, "models": []string{}})
+	models, err := listProviderModels(r.Context(), provider, req.BaseURL, apiKey, req.Proxy)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if lastErr == "" {
-		lastErr = "no model list received"
-	}
-	writeJSON(w, 200, map[string]any{"ok": false, "error": lastErr})
+	writeJSON(w, 200, map[string]any{"ok": true, "models": models})
 }
 
 // --- prompt template helpers (Go text/template + catalog whitelist) ---

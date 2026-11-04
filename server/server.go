@@ -108,6 +108,8 @@ type Server struct {
 	provCacheGen  uint64
 	provByModel   map[profileModelKey]*provEntry
 	profileLimits map[int64]llm.Provider
+	catalogMu     sync.Mutex
+	catalogCache  map[string]profileCatalog
 
 	// llmHealth is the process-wide circuit-breaker state for LLM failover (failover pool).
 	// It deliberately lives OUTSIDE the provider caches: rebuilding the chain
@@ -341,10 +343,10 @@ func (s *Server) agentRunSeconds(key string) int {
 // loadLLMConfig reads the active LLM profile from PG (llm_profiles).
 func (s *Server) loadLLMConfig() (agent.Config, bool) {
 	p, err := s.m.pg.ActiveProfile()
-	if err != nil || p == nil || strings.TrimSpace(p.Model) == "" {
+	if err != nil || p == nil || p.ResolvedModel() == "" {
 		return agent.Config{}, false
 	}
-	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
+	cfg := agent.ConfigFrom(p.Format, p.ResolvedModel(), p.BaseURL, p.APIKey, p.Proxy)
 	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
 	cfg.ContextWindowK = p.ContextWindowK
 	cfg.ThinkingType = p.ThinkingType
@@ -410,7 +412,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 func (s *Server) reapplyActiveProfile() {
 	cfg, ok := s.loadLLMConfig()
 	if !ok {
-		if p, err := s.m.pg.ActiveProfile(); err == nil && p != nil && strings.TrimSpace(p.Model) == "" {
+		if p, err := s.m.pg.ActiveProfile(); err == nil && p != nil && p.ResolvedModel() == "" {
 			s.cfgMu.Lock()
 			s.chatAgent, s.llmProv, s.llmDirect, s.llmOn = nil, nil, nil, false
 			s.llmCfg = agent.Config{}
@@ -575,7 +577,7 @@ func (s *Server) chatUnavailableReason() string {
 		}
 		if active, err := s.m.pg.ActiveProfile(); err == nil && active == nil {
 			return "No active LLM profile: activate one under System → LLM Profiles, or pick one for this conversation"
-		} else if active != nil && strings.TrimSpace(active.Model) == "" {
+		} else if active != nil && active.ResolvedModel() == "" {
 			return "Select a model in chat; the active connection uses automatic model discovery"
 		}
 	}
@@ -901,6 +903,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/llm/profiles", s.pgSaveProfile)
 	mux.HandleFunc("DELETE /api/llm/profiles/{id}", s.pgDeleteProfile)
 	mux.HandleFunc("POST /api/llm/profiles/active", s.pgActivateProfile)
+	mux.HandleFunc("PUT /api/llm/profiles/{id}/default-model", s.pgSetProfileDefaultModel)
 	mux.HandleFunc("GET /api/llm/retry-policy", s.pgGetLLMRetryPolicy)
 	mux.HandleFunc("POST /api/llm/retry-policy", s.pgSaveLLMRetryPolicy)
 	mux.HandleFunc("GET /api/llm/pool", s.pgLLMPoolStatus)
@@ -1523,16 +1526,17 @@ func truncateReply(s string) string {
 }
 
 type createTaskReq struct {
+	taskModelRequest
 	Name                 string   `json:"name,omitempty"` // optional task name; omitted/empty = unnamed
 	CategoryID           *int64   `json:"category_id,omitempty"`
 	Description          string   `json:"description"`
 	Goal                 string   `json:"goal"`
-	LLMProfileID         *int64   `json:"llm_profile_id,omitempty"`    // the LLM profile to run this task on; omitted/null = use the active profile
-	LLMProfileIDs        []int64  `json:"llm_profile_ids,omitempty"`   // ordered task-level profile chain; the first entry takes effect initially
-	SourceTaskIDs        []string `json:"source_task_ids,omitempty"`   // direct, read-only inherited source tasks
-	CompanyIDs           []int64  `json:"company_ids,omitempty"`       // links the company scope and snapshots its current assets; does not copy assets or force intent generation
+	LLMProfileID         *int64   `json:"llm_profile_id,omitempty"`  // the LLM profile to run this task on; omitted/null = use the active profile
+	LLMProfileIDs        []int64  `json:"llm_profile_ids,omitempty"` // ordered task-level profile chain; the first entry takes effect initially
+	SourceTaskIDs        []string `json:"source_task_ids,omitempty"` // direct, read-only inherited source tasks
+	CompanyIDs           []int64  `json:"company_ids,omitempty"`     // links the company scope and snapshots its current assets; does not copy assets or force intent generation
 	TimeoutSeconds       int      `json:"timeout_seconds"`
-	LLMRotate            *bool    `json:"llm_rotate"`             // task-level timeout (seconds); 0/omitted = no limit
+	LLMRotate            *bool    `json:"llm_rotate"`                  // task-level timeout (seconds); 0/omitted = no limit
 	PlanHeartbeatSeconds int      `json:"plan_heartbeat_seconds"`      // planner heartbeat interval (seconds); 0/omitted = default 600 (10min); floor = default = 600, lower values are raised to 600
 	PlanQuietMode        *bool    `json:"plan_quiet_mode,omitempty"`   // planner quiet-mode switch (#86); omitted = default on; false = edge rounds always plan
 	SeedFirstIntent      *bool    `json:"seed_first_intent,omitempty"` // issue one seed intent at creation (content = description + goal) so a worker can start right away without waiting for the first planner round; omitted/null = default off, the standard plan-then-execute flow. Pass true explicitly to enable (for CTF tasks often solved in one work, this skips the pre-start planner round).
@@ -1563,7 +1567,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if len(req.LLMProfileIDs) == 0 && req.LLMProfileID != nil {
 		req.LLMProfileIDs = []int64{*req.LLMProfileID}
 	}
-	if err := s.validateTaskProfileIDs(req.LLMProfileIDs); err != nil {
+	ids, selections, err := s.resolveTaskModels(r.Context(), req.LLMProfileIDs, req.taskModelRequest)
+	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
@@ -1606,7 +1611,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
-		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
+		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: ids, LLMSelections: selections,
 		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds, PlanQuietMode: req.PlanQuietMode,
 		CoverageEnabled: req.CoverageEnabled,
 		InterceptRules:  interceptRules,
@@ -1669,6 +1674,7 @@ func (s *Server) updateTaskLLMProfiles(w http.ResponseWriter, r *http.Request) {
 	// and not switching when the model is unavailable would lock interactions of finished tasks too.
 	before := t.llmStateSnapshot()
 	var req struct {
+		taskModelRequest
 		LLMProfileIDs      []int64 `json:"llm_profile_ids"`
 		ActiveLLMProfileID *int64  `json:"active_llm_profile_id"`
 	}
@@ -1676,7 +1682,8 @@ func (s *Server) updateTaskLLMProfiles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad json: "+err.Error())
 		return
 	}
-	if err := s.validateTaskProfileIDs(req.LLMProfileIDs); err != nil {
+	ids, selections, err := s.resolveTaskModels(r.Context(), req.LLMProfileIDs, req.taskModelRequest, before.Selections)
+	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
@@ -1684,7 +1691,7 @@ func (s *Server) updateTaskLLMProfiles(w http.ResponseWriter, r *http.Request) {
 	if req.ActiveLLMProfileID != nil {
 		active = *req.ActiveLLMProfileID
 	}
-	reopened, err := s.m.ReplaceTaskLLMProfiles(t.ID, req.LLMProfileIDs, active)
+	reopened, err := s.m.ReplaceTaskLLMProfiles(t.ID, ids, active, selections)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return

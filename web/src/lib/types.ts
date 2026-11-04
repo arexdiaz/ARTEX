@@ -32,6 +32,7 @@ export interface Task {
   tokens?: TokenTotal; // whole-task token consumption
   llm_profile_id?: number; // LLM profile used; absent = default profile
   llm_profile_ids?: number[]; // ordered task-level failover chain
+  llm_selections?: { profile_id: number; model: string; reasoning_effort: string; thinking_type: string }[];
   active_llm_profile_id?: number; // profile used by the next LLM call
   llm_failover_state?: "default" | "ready" | "chain_exhausted" | string;
   llm_failover_reason?: string;
@@ -680,6 +681,8 @@ export interface TaskLLMResolution {
   name: string;
   format: string;
   model: string;
+  reasoning_effort?: string;
+  thinking_type?: string;
   source: "task_chain" | "agent_binding" | "global_profile" | "environment" | "global";
   available: boolean;
   reason?: string;
@@ -1034,6 +1037,7 @@ export interface LLMProfile {
   base_url?: string;
   proxy?: string;
   model: string;
+  default_model?: string;
   api_key_hint?: string;
   rate_per_second: number;
   rate_per_minute: number;

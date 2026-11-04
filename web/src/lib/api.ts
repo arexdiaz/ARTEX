@@ -969,6 +969,7 @@ export const api = {
     name: string;
     format: string;
     model: string;
+    default_model?: string;
     base_url?: string;
     proxy?: string;
     api_key?: string; // blank on update keeps the existing key
@@ -987,6 +988,8 @@ export const api = {
   }) => post<{ id: number }>("/llm/profiles", p),
   deleteLLMProfile: (id: string) => del<{ deleted: number }>(`/llm/profiles/${id}`),
   activateLLMProfile: (id: string) => post<{ ok: boolean }>("/llm/profiles/active", { id: Number(id) }),
+  setProviderDefaultModel: (id: string, model: string) =>
+    put<{ ok: boolean }>(`/llm/profiles/${id}/default-model`, { default_model: model }),
   // The pool chain's actual order + each profile's breaker state.
   llmPool: () => get<LLMPoolStatus>("/llm/pool"),
   // Clear the breaker so the next call retries this profile immediately; no id = clear all.

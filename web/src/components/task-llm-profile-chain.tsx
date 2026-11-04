@@ -64,7 +64,7 @@ export function TaskLLMProfileChain({
   const profileLabel = React.useCallback(
     (id: string) => {
       const profile = profilesByID.get(id);
-      return profile ? `${profile.name} ${profile.model}` : `Profile #${id}`;
+      return profile ? `${profile.name} ${profile.model || profile.default_model || "Choose a default model first"}` : `Profile #${id}`;
     },
     [profilesByID],
   );
@@ -126,7 +126,7 @@ export function TaskLLMProfileChain({
                         {profile?.is_default ? " (active)" : ""}
                       </span>
                     </span>
-                    {profile && <span className="truncate text-muted-foreground text-xs">{profile.model}</span>}
+                    {profile && <span className="truncate text-muted-foreground text-xs">{profile.model || profile.default_model || "Default model required"}</span>}
                   </div>
                 </ComboboxItem>
               );

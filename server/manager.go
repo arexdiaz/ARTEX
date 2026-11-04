@@ -43,22 +43,23 @@ type Task struct {
 	// QueuedAt is an internal Unix-nanosecond ordering key. It is deliberately
 	// finer than CreatedAt so several tasks enqueued in the same second retain
 	// their real FIFO order.
-	QueuedAt           int64   `json:"queued_at,omitempty"`
-	QueueMode          string  `json:"queue_mode,omitempty"`
-	ParentRef          string  `json:"parent_ref,omitempty"`     // parent task id (orchestration spawn record)
-	LLMProfileID       *int64  `json:"llm_profile_id,omitempty"` // LLM profile to run this task's planner/worker; nil = use the globally active profile
-	LLMProfileIDs      []int64 `json:"llm_profile_ids,omitempty"`
-	ActiveLLMProfileID *int64  `json:"active_llm_profile_id,omitempty"`
-	LLMChainRevision   int64   `json:"-"`
-	LLMFailoverState   string  `json:"llm_failover_state,omitempty"`
+	QueuedAt           int64                     `json:"queued_at,omitempty"`
+	QueueMode          string                    `json:"queue_mode,omitempty"`
+	ParentRef          string                    `json:"parent_ref,omitempty"`     // parent task id (orchestration spawn record)
+	LLMProfileID       *int64                    `json:"llm_profile_id,omitempty"` // LLM profile to run this task's planner/worker; nil = use the globally active profile
+	LLMProfileIDs      []int64                   `json:"llm_profile_ids,omitempty"`
+	LLMSelections      []pgdb.TaskModelSelection `json:"llm_selections,omitempty"`
+	ActiveLLMProfileID *int64                    `json:"active_llm_profile_id,omitempty"`
+	LLMChainRevision   int64                     `json:"-"`
+	LLMFailoverState   string                    `json:"llm_failover_state,omitempty"`
 	// LLMRotate (#85): per-intent round-robin over the task's LLM chain heads.
-	LLMRotate  bool `json:"llm_rotate,omitempty"`
-	rotateMu   sync.Mutex
-	rotateNext int
-	LLMFailoverReason  string  `json:"llm_failover_reason,omitempty"`
-	SourceTaskIDs      []int64 `json:"source_task_ids,omitempty"`
-	CompanyIDs         []int64 `json:"company_ids,omitempty"`
-	Status             string  `json:"status"` // persisted lifecycle status (done/failed/timeout are terminal; empty/other is derived from runtime state)
+	LLMRotate         bool `json:"llm_rotate,omitempty"`
+	rotateMu          sync.Mutex
+	rotateNext        int
+	LLMFailoverReason string  `json:"llm_failover_reason,omitempty"`
+	SourceTaskIDs     []int64 `json:"source_task_ids,omitempty"`
+	CompanyIDs        []int64 `json:"company_ids,omitempty"`
+	Status            string  `json:"status"` // persisted lifecycle status (done/failed/timeout are terminal; empty/other is derived from runtime state)
 	// Task-level timeout (see docs/task-timeout-and-settle-design.md). DeadlineAt/FirstRunAt are unix seconds, 0 = unset/not yet run.
 	TimeoutSeconds       int                    `json:"timeout_seconds"`
 	PlanHeartbeatSeconds int                    `json:"plan_heartbeat_seconds"` // planner heartbeat trigger interval (seconds)
@@ -153,6 +154,7 @@ func (t *Task) updateLifecycle(update func(*taskLifecycleState)) {
 }
 
 type taskLLMState struct {
+	Selections     []pgdb.TaskModelSelection
 	ProfileID      *int64
 	ProfileIDs     []int64
 	ActiveID       *int64
@@ -174,6 +176,7 @@ func (t *Task) llmStateSnapshot() taskLLMState {
 	defer t.llmMu.RUnlock()
 	return taskLLMState{
 		ProfileID:      cloneInt64Ptr(t.LLMProfileID),
+		Selections:     append([]pgdb.TaskModelSelection(nil), t.LLMSelections...),
 		ProfileIDs:     append(make([]int64, 0, len(t.LLMProfileIDs)), t.LLMProfileIDs...),
 		ActiveID:       cloneInt64Ptr(t.ActiveLLMProfileID),
 		ChainRevision:  t.LLMChainRevision,
@@ -198,7 +201,7 @@ func (t *Task) nextRotatedProfile() (int64, bool) {
 	return pick, true
 }
 
-func (t *Task) setLLMState(profileID, activeID *int64, profileIDs []int64, revision int64, state, reason string) bool {
+func (t *Task) setLLMState(profileID, activeID *int64, profileIDs []int64, revision int64, state, reason string, selections ...[]pgdb.TaskModelSelection) bool {
 	t.llmMu.Lock()
 	defer t.llmMu.Unlock()
 	if revision < t.LLMChainRevision {
@@ -210,6 +213,9 @@ func (t *Task) setLLMState(profileID, activeID *int64, profileIDs []int64, revis
 	t.LLMChainRevision = revision
 	t.LLMFailoverState = state
 	t.LLMFailoverReason = reason
+	if len(selections) > 0 {
+		t.LLMSelections = append([]pgdb.TaskModelSelection(nil), selections[0]...)
+	}
 	return true
 }
 
@@ -860,6 +866,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		QueuedAt: unixNanoOrZero(pt.QueuedAt), QueueMode: pt.QueueMode,
 		CompletedAt: unixOrZero(pt.CompletedAt), Status: pt.Status, ParentRef: pt.ParentRef,
 		LLMProfileID:  pt.LLMProfileID,
+		LLMSelections: append([]pgdb.TaskModelSelection(nil), pt.LLMSelections...),
 		LLMProfileIDs: append([]int64(nil), pt.LLMProfileIDs...), ActiveLLMProfileID: pt.ActiveLLMProfileID, LLMRotate: pt.LLMRotate,
 		LLMChainRevision: pt.LLMChainRevision,
 		LLMFailoverState: pt.LLMFailoverState, LLMFailoverReason: pt.LLMFailoverReason,
@@ -1073,12 +1080,12 @@ func (m *Manager) DeleteCompanyWithAssets(id int64, deleteAssets bool) (int64, e
 // ReplaceTaskLLMProfiles resets a task's ordered provider chain and mirrors the
 // committed state onto the live task handle. Terminal tasks are editable too —
 // their main-agent conversation keeps running on the chain after the task finishes.
-func (m *Manager) ReplaceTaskLLMProfiles(id string, profileIDs []int64, activeProfileID int64) (int64, error) {
+func (m *Manager) ReplaceTaskLLMProfiles(id string, profileIDs []int64, activeProfileID int64, selections ...[]pgdb.TaskModelSelection) (int64, error) {
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return 0, err
 	}
-	if err := m.pg.ReplaceTaskLLMProfiles(n, profileIDs, activeProfileID); err != nil {
+	if err := m.pg.ReplaceTaskLLMProfiles(n, profileIDs, activeProfileID, selections...); err != nil {
 		return 0, err
 	}
 	pt, err := m.pg.GetTask(n)
@@ -1087,7 +1094,7 @@ func (m *Manager) ReplaceTaskLLMProfiles(id string, profileIDs []int64, activePr
 	}
 	m.mu.Lock()
 	if task := m.tasks[id]; task != nil {
-		task.setLLMState(pt.LLMProfileID, pt.ActiveLLMProfileID, pt.LLMProfileIDs, pt.LLMChainRevision, pt.LLMFailoverState, pt.LLMFailoverReason)
+		task.setLLMState(pt.LLMProfileID, pt.ActiveLLMProfileID, pt.LLMProfileIDs, pt.LLMChainRevision, pt.LLMFailoverState, pt.LLMFailoverReason, pt.LLMSelections)
 	}
 	m.mu.Unlock()
 	// Terminal tasks do not reopen budget-blocked intents: no worker is running for

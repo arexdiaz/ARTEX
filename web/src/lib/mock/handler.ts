@@ -2275,7 +2275,19 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     else mockLLMProfiles.push(profile);
     return { id };
   }
-  if (path === "/llm/profiles/active") return { ok: true };
+  if (seg[0] === "llm" && seg[1] === "profiles" && seg[3] === "default-model" && m === "PUT") {
+    const profile = mockLLMProfiles.find((p) => p.id === seg[2]);
+    if (!profile) throw new Error("Provider not found");
+    if (!b.default_model) throw new Error("Choose a default model first");
+    profile.default_model = String(b.default_model);
+    return { ok: true };
+  }
+  if (path === "/llm/profiles/active") {
+    const profile = mockLLMProfiles.find((p) => Number(p.id) === Number(b.id));
+    if (!profile || !(profile.model || profile.default_model)) throw new Error("Choose a default model first");
+    for (const p of mockLLMProfiles) p.is_default = p === profile;
+    return { ok: true };
+  }
   if (path === "/llm/pool" && m === "GET") return D.llmPool;
   if (path === "/llm/pool/reset")
     return { ...D.llmPool, chain: D.llmPool.chain.map((c) => ({ ...c, state: "ok", fails: 0, cooldown_secs: 0 })) };

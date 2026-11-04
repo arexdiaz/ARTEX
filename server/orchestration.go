@@ -61,11 +61,12 @@ func (s *Server) hostTools() ([]actool.CoreTool, map[string][]string) {
 }
 
 // orchestrationTools returns the cross-task tool set. Bound per-agent via the
-// tools table (default: no binding — opt-in for orchestration agents).
+// tools table (default: the Auto orchestration agent).
 func (s *Server) orchestrationTools() []actool.CoreTool {
 	return []actool.CoreTool{
 		s.toolListTasks(),
 		s.toolListLLMProfiles(),
+		s.toolListLLMModels(),
 		s.toolSpawnTask(),
 		s.toolPauseTask(),
 		s.toolGetTaskGraph(),
@@ -221,7 +222,7 @@ func (s *Server) toolListTasks() actool.CoreTool {
 // orchestration agent can pick one for spawn_task's llm_profile. Never leaks keys.
 func (s *Server) toolListLLMProfiles() actool.CoreTool {
 	return roTool("list_llm_profiles",
-		"List the available LLM profiles: id, name, model, format, and whether one is the currently active profile. Use the id for spawn_task's llm_profile_id parameter to give a subtask its own LLM (e.g. a cheap model for recon, a strong model for exploitation). Never includes API keys.",
+		"List provider/profile IDs, system-default status, default model and default reasoning. Use list_llm_models to discover available models before overriding spawn_task's llm_model. No credentials are returned.",
 		objSchema(map[string]any{}),
 		func(context.Context, json.RawMessage) (actool.Result, error) {
 			profs, err := s.m.pg.ListProfiles()
@@ -232,10 +233,54 @@ func (s *Server) toolListLLMProfiles() actool.CoreTool {
 			for _, p := range profs {
 				out = append(out, map[string]any{
 					"id": p.ID, "name": p.Name, "model": p.Model, "format": p.Format, "is_active": p.IsDefault,
+					"default_model": p.ResolvedModel(), "default_reasoning_effort": p.ReasoningEffort, "default_thinking_type": p.ThinkingType, "discovery": p.Model == "",
 				})
 			}
 			return jsonResult(map[string]any{"profiles": out})
 		})
+}
+
+func (s *Server) toolListLLMModels() actool.CoreTool {
+	return roTool("list_llm_models", "Discover available model IDs for a provider. Use a returned ID in spawn_task's llm_model. Reasoning levels vary by model and provider; omission inherits provider defaults. No credentials are returned.", objSchema(map[string]any{
+		"llm_profile_id": map[string]any{"type": "integer", "description": "provider ID from list_llm_profiles"},
+		"query":          strParam("optional model ID search"),
+		"limit":          map[string]any{"type": "integer", "description": "maximum models returned, default 50, up to 200"},
+	}, "llm_profile_id"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
+		var request struct {
+			ID    int64  `json:"llm_profile_id"`
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.Unmarshal(in, &request); err != nil {
+			return actool.Errorf("invalid request"), nil
+		}
+		p, err := s.m.pg.ProfileByID(request.ID)
+		if err != nil || p == nil {
+			return actool.Errorf("provider not found"), nil
+		}
+		models, err := s.modelsForProfile(ctx, p)
+		if err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		limit := request.Limit
+		if limit <= 0 {
+			limit = 50
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		matches := []string{}
+		for _, model := range models {
+			if strings.Contains(strings.ToLower(model), strings.ToLower(request.Query)) {
+				matches = append(matches, model)
+			}
+		}
+		total := len(matches)
+		if total > limit {
+			matches = matches[:limit]
+		}
+		return jsonResult(map[string]any{"llm_profile_id": p.ID, "provider": p.Name, "models": matches, "total": total, "default_model": p.ResolvedModel(), "default_reasoning_effort": p.ReasoningEffort, "default_thinking_type": p.ThinkingType})
+	})
 }
 
 func (s *Server) toolSpawnTask() actool.CoreTool {
@@ -246,23 +291,29 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			"goal":                   strParam("task goal (what to achieve)"),
 			"parent_ref":             strParam("optional: parent task id (for parent-child linking)"),
 			"source_task_ids":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": fmt.Sprintf("optional: ids of source tasks to inherit read-only (at most %d). The subtask may read the assets/conclusions those tasks already explored as its starting point; unlike parent_ref's plain parent-child pointer, this is content inheritance.", db.MaxTaskSourceCount)},
-			"llm_profile_id":         map[string]any{"type": "integer", "description": "optional: the LLM profile id this subtask's planner/worker uses (see list_llm_profiles); empty inherits the parent task, then falls back to the global active profile"},
+			"llm_profile_id":         map[string]any{"type": "integer", "description": "optional: provider ID from list_llm_profiles; omitted uses system default (or the linked parent's saved selection). A supplied provider uses its default model/reasoning unless overridden. Task selections take precedence over agent bindings."},
+			"llm_model":              strParam("optional: concrete model ID from list_llm_models for the selected llm_profile_id; omitted uses that provider's default model"),
+			"reasoning_effort":       map[string]any{"type": "string", "enum": []string{"", "off", "none", "minimal", "low", "medium", "high", "xhigh", "max"}, "description": "optional: omitted inherits the chosen provider's default reasoning; empty string uses model default; off disables reasoning. Other levels depend on provider support."},
+			"llm_source":             map[string]any{"type": "string", "enum": []string{"system_default", "inherit_parent"}, "description": "system_default uses the active provider's default model/reasoning; inherit_parent copies the parent task selection. Omitted inherits an explicitly linked parent, otherwise uses system default. Do not combine with overrides."},
 			"timeout_seconds":        map[string]any{"type": "integer", "description": "optional: task-level timeout (seconds). When it fires, a graceful wrap-up runs and the task enters the timeout terminal state; empty or 0 = no time limit"},
 			"plan_heartbeat_seconds": map[string]any{"type": "integer", "description": "optional: planner heartbeat interval (seconds). When this much time has passed since the last planning round ended/the task started with no trigger in between → run one planning round (deadlock backstop + wakes the planner to supervise in-flight workers). Empty or 0 = default 600 (10min);"},
 			"seed_first_intent":      map[string]any{"type": "boolean", "description": "optional: enable for simple tasks to issue one seed intent at creation (content = description + goal) so a worker can start testing right away without waiting for the first planner round; default false (the standard plan-then-execute flow)."},
 		}, "description", "goal"),
-		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
-				Description          string          `json:"description"`
-				Goal                 string          `json:"goal"`
-				ParentRef            string          `json:"parent_ref"`
-				SourceTaskIDs        []string        `json:"source_task_ids"`
-				LLMProfileID         json.RawMessage `json:"llm_profile_id"`
-				TimeoutSeconds       int             `json:"timeout_seconds"`
-				PlanHeartbeatSeconds int             `json:"plan_heartbeat_seconds"`
-				SeedFirstIntent      bool            `json:"seed_first_intent"`
+				Description   string          `json:"description"`
+				Goal          string          `json:"goal"`
+				ParentRef     string          `json:"parent_ref"`
+				SourceTaskIDs []string        `json:"source_task_ids"`
+				LLMProfileID  json.RawMessage `json:"llm_profile_id"`
+				taskModelRequest
+				TimeoutSeconds       int  `json:"timeout_seconds"`
+				PlanHeartbeatSeconds int  `json:"plan_heartbeat_seconds"`
+				SeedFirstIntent      bool `json:"seed_first_intent"`
 			}
-			_ = json.Unmarshal(in, &a)
+			if err := json.Unmarshal(in, &a); err != nil {
+				return actool.Errorf("invalid task arguments: " + err.Error()), nil
+			}
 			if strings.TrimSpace(a.Description) == "" {
 				a.Description = "Unnamed task"
 			}
@@ -289,25 +340,61 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				seenSources[id] = true
 				sourceIDs = append(sourceIDs, id)
 			}
-			// LLM profile resolution: explicit id > inherit parent's pin > active(nil).
-			var pin *int64
-			if id := parseProfileID(a.LLMProfileID); id > 0 {
-				if _, ok := s.loadProfileConfig(id); !ok {
-					return actool.Errorf(fmt.Sprintf("LLM profile #%d not found or not usable (no API key for the key-requiring formats)", id)), nil
-				}
-				pin = &id
-			} else if a.ParentRef != "" {
-				if pt, ok := s.m.Task(a.ParentRef); ok {
-					pin = pt.LLMProfileID
-				}
-			}
 			var llmIDs []int64
-			if pin != nil {
-				llmIDs = []int64{*pin}
+			var selections []db.TaskModelSelection
+			id := parseProfileID(a.LLMProfileID)
+			if len(a.LLMProfileID) > 0 && string(a.LLMProfileID) != "null" && id <= 0 {
+				return actool.Errorf("invalid LLM provider id"), nil
+			}
+			inherit := a.Source == "inherit_parent" || (a.Source == "" && id == 0 && a.Model == "" && a.ReasoningEffort == nil && a.ParentRef != "")
+			if inherit {
+				if id != 0 || a.Model != "" || a.ReasoningEffort != nil {
+					return actool.Errorf("parent inheritance cannot be combined with model overrides"), nil
+				}
+				parentID, err := strconv.ParseInt(a.ParentRef, 10, 64)
+				if err != nil {
+					return actool.Errorf("select a valid parent task to inherit its model"), nil
+				}
+				parent, err := s.m.pg.GetTask(parentID)
+				if err != nil || parent == nil {
+					return actool.Errorf("parent task not found"), nil
+				}
+				if len(parent.LLMProfileIDs) > 0 && parent.ActiveLLMProfileID == nil {
+					return actool.Errorf("parent task model chain is exhausted; choose a provider or system_default"), nil
+				}
+				if parent.ActiveLLMProfileID != nil {
+					llmIDs = []int64{*parent.ActiveLLMProfileID}
+				}
+				for _, selection := range parent.LLMSelections {
+					if len(llmIDs) > 0 && selection.ProfileID == llmIDs[0] {
+						p, err := s.m.pg.ProfileByID(selection.ProfileID)
+						if err != nil || p == nil {
+							return actool.Errorf("parent task provider is unavailable"), nil
+						}
+						if err := s.validateProviderModel(ctx, p, selection.Model); err != nil {
+							return actool.Errorf(err.Error()), nil
+						}
+						if _, _, ok := s.providerForTaskSelection(parent.LLMSelections, selection.ProfileID); !ok {
+							return actool.Errorf("parent task model is unavailable"), nil
+						}
+						selections = []db.TaskModelSelection{selection}
+					}
+				}
+				a.Source = ""
+			} else if id > 0 {
+				llmIDs = []int64{id}
+			}
+			if len(selections) == 0 {
+				var err error
+				llmIDs, selections, err = s.resolveTaskModels(ctx, llmIDs, a.taskModelRequest)
+				if err != nil {
+					return actool.Errorf(err.Error()), nil
+				}
 			}
 			t, err := s.m.CreateTaskWithOptions(a.Description, a.Goal, db.TaskCreateOptions{
 				SourceTaskIDs:        sourceIDs,
 				LLMProfileIDs:        llmIDs,
+				LLMSelections:        selections,
 				TimeoutSeconds:       a.TimeoutSeconds,
 				PlanHeartbeatSeconds: a.PlanHeartbeatSeconds,
 			})
@@ -324,7 +411,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			// seed + a visibly-in-background goal decomposition (round 0 / LLM steps / per-goal) + engine.Run.
 			// seed_first_intent defaults to false (the standard plan-then-execute flow); simple tasks may enable it to issue one work test directly.
 			s.launchTask(t, a.Description+" "+a.Goal, a.SeedFirstIntent)
-			return actool.Text(fmt.Sprintf("task created: %s", t.ID)), nil
+			return jsonResult(map[string]any{"task_id": t.ID, "llm_selections": selections})
 		})
 }
 
@@ -524,7 +611,7 @@ func (s *Server) seedOrchestrationTools() {
 // reaches an old DB otherwise. Preserves each tool's agent binding + enabled flag.
 // Bump the flag whenever these tools' schemas/descriptions change in code.
 func (s *Server) refreshBuiltinToolSchemas() {
-	const flag = "tool_schema_refresh_v7_list_facts_paging"
+	const flag = "tool_schema_refresh_v8_provider_models"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}

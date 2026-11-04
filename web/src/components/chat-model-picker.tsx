@@ -102,7 +102,7 @@ export function ChatModelPicker({
   );
   const currentProfile =
     value.profileId != null ? profiles.find((p) => Number(p.id) === value.profileId) : defaultProfile;
-  const currentModel = value.model || currentProfile?.model || "";
+  const currentModel = value.model || currentProfile?.model || currentProfile?.default_model || "";
   const effort = value.effort ?? currentProfile?.reasoning_effort ?? "";
   const effortLabel = efforts.find((option) => option.value === effort)?.label || effort;
 
@@ -315,8 +315,8 @@ export function ChatModelPicker({
               >
                 {!editing &&
                   !query &&
-                  defaultProfile?.model &&
-                  !hidden.has(modelKey(defaultProfile.id, defaultProfile.model)) && (
+                  (defaultProfile?.model || defaultProfile?.default_model) &&
+                  !hidden.has(modelKey(defaultProfile.id, defaultProfile.model || defaultProfile.default_model || "")) && (
                     <button
                       type="button"
                       disabled={saving}
