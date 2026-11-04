@@ -2,6 +2,8 @@
 
 import * as React from "react";
 
+import { useIsMobile } from "@/hooks/use-mobile";
+
 import {
   ArrowUpIcon,
   BrainIcon,
@@ -516,6 +518,7 @@ export function SessionsTab({ taskId, taskPaused = false }: { taskId: string; ta
   // On mobile (<lg) the session list is collapsed by default: screen height is already tight, and a fixed 10~15rem list
   // would squeeze the transcript below down to just the header and input. Collapsed, the transcript gets nearly all the height;
   // tapping the title bar expands it to pick a session, collapsing again after choosing. Desktop is unaffected (always expanded from lg up).
+  const isPhone = useIsMobile();
   const [listOpen, setListOpen] = React.useState(false);
   // Per-session lazily-loaded caches, keyed by session_key (main | plan | intent:<id>).
   const [store, setStore] = React.useState<SessionStore>({});
@@ -1945,7 +1948,11 @@ export function SessionsTab({ taskId, taskPaused = false }: { taskId: string; ta
                     rows={1}
                     aria-label="Message the main agent"
                     placeholder={
-                      mainBusy ? "The main agent is running; type /btw to ask a side question…" : "Message the main agent; @ to reference findings, assets, and more…"
+                      isPhone
+                        ? mainBusy ? "Agent is replying…" : "Message this session…"
+                        : mainBusy
+                          ? "The main agent is running; type /btw to ask a side question…"
+                          : "Message the main agent; @ to reference findings, assets, and more…"
                     }
                     value={input}
                     disabled={sending}

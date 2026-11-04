@@ -1,0 +1,144 @@
+/* Keep the desktop layout intact while fitting the workspace to phones. */
+@media (max-width: 767px) {
+  html:has([data-slot="sidebar-wrapper"]),
+  body:has([data-slot="sidebar-wrapper"]) {
+    min-height: 0;
+    height: var(--app-viewport-height, 100dvh);
+    overflow: hidden;
+  }
+  [data-slot="sidebar-wrapper"] {
+    height: var(--app-viewport-height, 100dvh);
+    min-height: 0;
+  }
+  [data-slot="sidebar-inset"] {
+    min-height: 0;
+  }
+  [data-slot="app-header"] {
+    height: var(--dashboard-header-height, 48px);
+  }
+  [data-slot="app-header"] [data-slot="sidebar-trigger"],
+  #mobile-header-actions > button {
+    min-width: 44px;
+    height: 44px;
+  }
+  [data-slot="app-version"],
+  [data-slot="workspace-search"] kbd {
+    display: none;
+  }
+  [data-slot="workspace-search"] {
+    width: 44px;
+    height: 44px;
+    font-size: 0;
+  }
+  [data-slot="workspace-search"] svg {
+    width: 18px;
+    height: 18px;
+  }
+  [data-slot="app-header"] [data-slot="separator"] {
+    margin-inline: 2px;
+  }
+  [data-slot="chat-page"] {
+    height: calc(var(--app-viewport-height, 100dvh) - var(--dashboard-header-height, 48px));
+  }
+  [data-slot="chat-panels"] > [data-slot="conversation-list"] {
+    display: none;
+  }
+  [data-slot="sheet-content"] [data-slot="conversation-list"] {
+    border: 0;
+    border-radius: 0;
+  }
+  [data-slot="chat-agent-header"] {
+    min-height: 44px;
+    flex-wrap: nowrap;
+    padding: 0 10px;
+    gap: 8px;
+  }
+  [data-slot="chat-agent-description"],
+  [data-slot="chat-token-metrics"] {
+    display: none;
+  }
+  [data-slot="chat-agent-header"] > button {
+    height: 44px;
+    width: 44px;
+  }
+  [data-slot="chat-composer"] {
+    padding: 8px;
+  }
+  [data-slot="chat-composer-row"] {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 40px;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: end;
+  }
+  [data-slot="chat-composer-row"] > .w-full {
+    grid-column: 1 / -1;
+  }
+  [data-slot="chat-composer-row"] > button {
+    min-height: 44px;
+    width: 100%;
+  }
+  [data-slot="chat-composer-row"] textarea {
+    font-size: 16px;
+    min-height: 44px;
+    max-height: 120px;
+    line-height: 1.5;
+  }
+  [data-slot="chat-model-controls"] {
+    min-height: 44px;
+    padding: 0 6px calc(2px + env(safe-area-inset-bottom));
+  }
+  [data-slot="chat-model-controls"] > [data-slot="popover-trigger"] {
+    min-height: 44px;
+  }
+  [data-slot="chat-model-controls"] > button:first-child {
+    max-width: 58%;
+    min-height: 44px;
+  }
+  [data-slot="chat-model-controls"] button {
+    min-height: 40px;
+  }
+  [data-slot="popover-content"] {
+    max-width: calc(100vw - 16px);
+    max-height: min(72dvh, 540px);
+    overflow-y: auto;
+  }
+  [data-slot="dialog-content"] {
+    max-height: calc(var(--app-viewport-height, 100dvh) - 24px);
+    overflow-y: auto;
+  }
+  [data-slot="task-detail"] {
+    height: var(--app-viewport-height, 100dvh);
+  }
+  [data-slot="task-detail-header"] > div:first-child {
+    flex-wrap: wrap;
+  }
+  [data-slot="task-detail-header"] h1 {
+    flex: 1 0 calc(100% - 80px);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  [data-slot="task-detail-header"] [data-slot="tabs-list"] {
+    max-width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+    scrollbar-width: none;
+  }
+  [data-slot="task-detail-header"] [data-slot="tabs-trigger"] {
+    flex: 0 0 auto;
+  }
+  [data-slot="card"],
+  [data-slot="card-content"],
+  [data-slot="tabs-content"] {
+    min-width: 0;
+  }
+  [data-slot="card-content"],
+  [data-slot="card-header"] {
+    padding-inline: 12px;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

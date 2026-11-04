@@ -4,10 +4,12 @@ import * as React from "react";
 
 import {
   ArrowUpIcon,
+  MessagesSquareIcon,
   Bot,
   ChevronRightIcon,
   ListChecksIcon,
   Loader2Icon,
+  MessageCircleQuestionIcon,
   MoreHorizontalIcon,
   PaperclipIcon,
   PencilIcon,
@@ -22,6 +24,7 @@ import { toast } from "sonner";
 
 import { ChatModelPicker, type ChatModelChoice } from "@/components/chat-model-picker";
 import { MentionTextarea } from "@/components/mention-textarea";
+import { MobileHeaderActions } from "@/components/mobile-header-actions";
 import { SideQuestionButton, SideQuestionWorkspace } from "@/components/side-question-workspace";
 import { TodoPopover } from "@/components/todo-popover";
 import { ApprovalExecutionFocus, useApprovalFocus, useApprovalHistory } from "@/components/approval-execution-focus";
@@ -49,7 +52,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useSideQuestions } from "@/hooks/use-side-questions";
 import { mergeActivities } from "@/lib/activity-merge";
 import { api } from "@/lib/api";
@@ -174,6 +179,7 @@ function Composer({
   uploading?: boolean;
   allowBtw?: boolean;
 }) {
+  const isMobile = useIsMobile();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const atts = attachments ?? [];
   // The send key binding comes from system settings (localStorage); Enter sends by default.
@@ -184,7 +190,7 @@ function Composer({
     onSend();
   }
   return (
-    <div className="border-t p-3">
+    <div data-slot="chat-composer" className="border-t p-3">
       {atts.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {atts.map((a) => (
@@ -210,7 +216,7 @@ function Composer({
           ))}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      <div data-slot="chat-composer-row" className="flex flex-wrap items-center gap-2">
         {leftSlot ? <div className="w-full sm:w-auto">{leftSlot}</div> : null}
         {onPickFiles && (
           <>
@@ -241,7 +247,7 @@ function Composer({
         <MentionTextarea
           className="max-h-40 min-h-10 min-w-0 flex-1 resize-none"
           rows={1}
-          placeholder={placeholder}
+          placeholder={isMobile ? (running ? "Agent is replying…" : "Type a message…") : placeholder}
           value={value}
           disabled={disabled && !(running && allowBtw)}
           onValueChange={onChange}
@@ -445,6 +451,7 @@ function ChatView({
   }, [conv.llm_profile_id, conv.llm_model, conv.reasoning_effort]);
   const [switchingModel, setSwitchingModel] = React.useState(false);
   const side = useSideQuestions(`/api/conversations/${conv.id}`);
+  const openingSideQuestion = React.useRef(false);
 
   async function changeModel(choice: ChatModelChoice) {
     setSwitchingModel(true);
@@ -709,7 +716,7 @@ function ChatView({
   return (
     <SideQuestionWorkspace side={side} label={agent?.name ?? conv.agent_key} composerLayout="inline">
       {/* header: which agent + live + token meta */}
-      <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-2.5">
+      <div data-slot="chat-agent-header" className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-2.5">
         <Bot className="text-muted-foreground size-4 shrink-0" />
         <span className="min-w-0 max-w-48 truncate text-sm font-medium">{agent?.name ?? conv.agent_key}</span>
         <span className="text-muted-foreground hidden shrink-0 font-mono text-xs sm:inline">{conv.agent_key}</span>
@@ -719,11 +726,43 @@ function ChatView({
           </Badge>
         )}
         {agent?.description && (
-          <span className="text-muted-foreground min-w-0 truncate text-xs">{agent.description}</span>
+          <span data-slot="chat-agent-description" className="text-muted-foreground min-w-0 truncate text-xs">{agent.description}</span>
         )}
         {running && <LiveBadge />}
-        <SideQuestionButton side={side} />
-        <div className="text-muted-foreground ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-3 gap-y-1 text-xs max-sm:w-full max-sm:flex-wrap">
+        <span className="hidden md:contents"><SideQuestionButton side={side} /></span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button className="ml-auto md:hidden" variant="ghost" size="icon" aria-label="Conversation details"><MoreHorizontalIcon /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="max-w-[calc(100vw-2rem)] w-72"
+            onCloseAutoFocus={(event) => {
+              if (openingSideQuestion.current) {
+                event.preventDefault();
+                openingSideQuestion.current = false;
+              }
+            }}
+          >
+            <div className="space-y-2 px-2 py-2 text-xs">
+              <p className="font-medium">{agent?.name ?? conv.agent_key}</p>
+              <p className="text-muted-foreground">{agent?.description}</p>
+              <p className="text-muted-foreground">{tokenTotal.turns} turns · input {fmtTokens(tokenTotal.i)} · cache {fmtTokens(tokenTotal.cr)} · output {fmtTokens(tokenTotal.o)}</p>
+            </div>
+            {side.enabled && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => {
+                  openingSideQuestion.current = true;
+                  side.setOpen(true);
+                }}>
+                  <MessageCircleQuestionIcon /> Side question
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <div data-slot="chat-token-metrics" className="text-muted-foreground ml-auto flex min-w-0 max-w-full items-center justify-end gap-x-3 gap-y-1 text-xs max-sm:w-full max-sm:flex-wrap">
           {tokenTotal.turns > 0 && (
             <span title="Agent loop turns (model calls)" className="tabular-nums">
               {tokenTotal.turns} turns
@@ -991,6 +1030,13 @@ function AgentGroupHeader({
 }
 
 export default function ChatPage() {
+  const isMobile = useIsMobile();
+  const [mobileConversationsOpen, setMobileConversationsOpen] = React.useState(false);
+  const mobileConversationsTrigger = React.useRef<HTMLButtonElement>(null);
+
+  React.useEffect(() => {
+    if (!isMobile) setMobileConversationsOpen(false);
+  }, [isMobile]);
   const [agents, setAgents] = React.useState<Agent[]>([]);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [convs, setConvs] = React.useState<Conversation[]>([]);
@@ -1296,16 +1342,10 @@ export default function ChatPage() {
   );
   const cancelRename = React.useCallback(() => setRenamingId(null), []);
 
-  return (
-    <div
-      data-content-padding="false"
-      className="flex h-[calc(100svh-var(--dashboard-header-height)-var(--app-shell-offset,0px))] min-w-0 flex-col overflow-hidden p-(--app-page-padding)"
-    >
-      <div data-slot="chat-panels" className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(10rem,15rem)_minmax(0,1fr)] gap-(--app-panel-gap) md:grid-cols-[18rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]">
-        {/* left: conversation list */}
-        <div className="bg-card flex flex-col overflow-hidden rounded-lg border">
+  const conversationList = (
+<div data-slot="conversation-list" className="bg-card flex h-full min-h-0 flex-col overflow-hidden rounded-lg border">
           <div className="flex flex-col gap-2 border-b p-2">
-            <Button size="sm" className="w-full" onClick={() => selectConversation(null)}>
+            <Button size="sm" className="w-full" onClick={() => { selectConversation(null); setMobileConversationsOpen(false); }}>
               <PlusIcon /> New conversation
             </Button>
             <Select
@@ -1392,7 +1432,7 @@ export default function ChatPage() {
                   active={selectedId === c.id}
                   renaming={renamingId === c.id}
                   renameText={renamingId === c.id ? renameText : ""}
-                  onSelect={selectConversation}
+                  onSelect={(id) => { selectConversation(id); setMobileConversationsOpen(false); }}
                   onStartRename={startRename}
                   onRenameText={setRenameText}
                   onCommitRename={commitRename}
@@ -1424,7 +1464,7 @@ export default function ChatPage() {
                           active={selectedId === c.id}
                           renaming={renamingId === c.id}
                           renameText={renamingId === c.id ? renameText : ""}
-                          onSelect={selectConversation}
+                          onSelect={(id) => { selectConversation(id); setMobileConversationsOpen(false); }}
                           onStartRename={startRename}
                           onRenameText={setRenameText}
                           onCommitRename={commitRename}
@@ -1453,6 +1493,49 @@ export default function ChatPage() {
             </div>
           </ScrollArea>
         </div>
+  );
+
+  return (
+    <div
+      data-content-padding="false"
+      data-slot="chat-page"
+      className="flex h-[calc(100svh-var(--dashboard-header-height)-var(--app-shell-offset,0px))] min-w-0 flex-col overflow-hidden p-(--app-page-padding)"
+    >
+      <MobileHeaderActions>
+        <Button
+          ref={mobileConversationsTrigger}
+          variant="ghost"
+          size="icon"
+          aria-label="Open conversations"
+          aria-haspopup="dialog"
+          aria-expanded={mobileConversationsOpen}
+          aria-controls="chat-conversation-drawer"
+          onClick={() => setMobileConversationsOpen(true)}
+        >
+          <MessagesSquareIcon />
+        </Button>
+      </MobileHeaderActions>
+      <div data-slot="chat-panels" className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] gap-(--app-panel-gap) md:grid-cols-[18rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]">
+        {isMobile ? (
+          <Sheet open={mobileConversationsOpen} onOpenChange={setMobileConversationsOpen}>
+            <SheetContent
+              id="chat-conversation-drawer"
+              side="left"
+              className="w-[min(22rem,calc(100vw-2rem))] gap-0 p-0"
+              aria-label="Conversations"
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                mobileConversationsTrigger.current?.focus();
+              }}
+            >
+              <SheetHeader className="border-b px-3 py-3">
+                <SheetTitle className="text-sm">Conversations</SheetTitle>
+                <SheetDescription className="sr-only">Choose an existing conversation or start a new one.</SheetDescription>
+              </SheetHeader>
+              <div className="min-h-0 flex-1">{conversationList}</div>
+            </SheetContent>
+          </Sheet>
+        ) : conversationList}
 
         {/* right: chat view */}
         <div className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border">

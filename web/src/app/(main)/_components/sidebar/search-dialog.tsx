@@ -133,6 +133,8 @@ export function SearchDialog() {
   return (
     <>
       <Button
+        data-slot="workspace-search"
+        aria-label="Search workspace"
         onClick={() => handleOpenChange(true)}
         variant="link"
         className="px-0! font-normal text-muted-foreground hover:no-underline"

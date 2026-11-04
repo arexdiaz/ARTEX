@@ -204,7 +204,7 @@ export function ChatModelPicker({
   );
 
   return (
-    <div className="flex min-w-0 shrink-0 items-center gap-1 px-2 pb-1 text-xs">
+    <div data-slot="chat-model-controls" className="flex min-w-0 shrink-0 items-center gap-1 px-2 pb-1 text-xs">
       <Popover open={open} onOpenChange={show}>
         <PopoverTrigger asChild>
           <button

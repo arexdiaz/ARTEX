@@ -49,6 +49,7 @@ export function MainContent({ children }: { children: ReactNode }) {
   return (
     <>
       <header
+        data-slot="app-header"
         className={cn(
           "flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12",
           "[html[data-navbar-style=sticky]_&]:sticky [html[data-navbar-style=sticky]_&]:top-0 [html[data-navbar-style=sticky]_&]:z-50 [html[data-navbar-style=sticky]_&]:overflow-hidden [html[data-navbar-style=sticky]_&]:rounded-t-[inherit] [html[data-navbar-style=sticky]_&]:bg-background/50 [html[data-navbar-style=sticky]_&]:backdrop-blur-md",
@@ -57,6 +58,7 @@ export function MainContent({ children }: { children: ReactNode }) {
         <div className="flex w-full items-center justify-between px-2">
           <div className="flex items-center gap-1 lg:gap-2">
             <SidebarTrigger className="-ml-1" />
+            <div id="mobile-header-actions" className="contents md:hidden" />
             <Separator
               orientation="vertical"
               className="mx-2 data-[orientation=vertical]:h-4 data-[orientation=vertical]:self-center"
@@ -65,7 +67,7 @@ export function MainContent({ children }: { children: ReactNode }) {
           </div>
           <div className="flex items-center gap-2">
             {version && (
-              <span className="font-medium text-muted-foreground text-xs tabular-nums">Version · {version}</span>
+              <span data-slot="app-version" className="font-medium text-muted-foreground text-xs tabular-nums">Version · {version}</span>
             )}
             <LayoutControls />
             <ThemeSwitcher />

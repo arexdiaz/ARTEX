@@ -352,9 +352,9 @@ function TaskDetailInner() {
   );
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="flex h-[calc(100svh-var(--app-shell-offset,0px))] min-h-0 shrink-0 flex-col gap-0 overflow-hidden">
+    <Tabs data-slot="task-detail" value={tab} onValueChange={setTab} className="flex h-[calc(100svh-var(--app-shell-offset,0px))] min-h-0 shrink-0 flex-col gap-0 overflow-hidden">
       {/* Top fixed area */}
-      <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-2 border-b bg-background/95 px-2 py-2 backdrop-blur">
+      <header data-slot="task-detail-header" className="sticky top-0 z-10 flex shrink-0 flex-col gap-2 border-b bg-background/95 px-2 py-2 backdrop-blur">
         <div className="flex items-center gap-2">
           <SidebarTrigger className="-ml-1" />
           <Button asChild variant="ghost" size="icon" className="size-7">
