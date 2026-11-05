@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 
 import {
   ArrowUpIcon,
@@ -1061,7 +1062,8 @@ function AgentGroupHeader({
   );
 }
 
-export default function ChatPage() {
+function ChatPageContent() {
+  const selectionQuery = useSearchParams().toString();
   const isMobile = useIsMobile();
   const [mobileConversationsOpen, setMobileConversationsOpen] = React.useState(false);
   const mobileConversationsTrigger = React.useRef<HTMLButtonElement>(null);
@@ -1077,16 +1079,20 @@ export default function ChatPage() {
   const [selectionRestored, setSelectionRestored] = React.useState(false);
   const [sourceRequested, setSourceRequested] = React.useState(false);
   const [convsLoaded, setConvsLoaded] = React.useState(false);
+  const lastStoredSelection = React.useRef<number | null | undefined>(undefined);
   const selectConversation = React.useCallback(
     (id: number | null) => {
+      const url = new URL(window.location.href);
       if (id !== selectedId) {
-        const url = new URL(window.location.href);
         url.searchParams.delete("approval");
         setSourceRequested(false);
-        window.history.replaceState(null, "", url);
       }
+      if (id !== null) url.searchParams.set("c", String(id));
+      else url.searchParams.delete("c");
+      if (url.href !== window.location.href) window.history.replaceState(null, "", url);
       setSelectedId(id);
       setLocalStorageValue(LAST_CONVERSATION_KEY, id === null ? "draft" : String(id));
+      lastStoredSelection.current = id;
     },
     [selectedId],
   );
@@ -1186,38 +1192,36 @@ export default function ChatPage() {
   // Explicit conversation links win; ordinary navigation back to Chat restores
   // the last selection. "draft" also remembers an intentional New conversation.
   React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setSourceRequested(params.has("approval"));
-    const saved = params.has("approval") ? null : getLocalStorageValue(LAST_CONVERSATION_KEY);
-    setSelectedId(parseConversationId(params.get("c") ?? saved));
-    setSelectionRestored(true);
-  }, []);
-  // Wait for restoration before mirroring the selection, so the initial empty
-  // draft cannot erase a deep link. Validate missing IDs after the list loads.
-  React.useEffect(() => {
-    if (!selectionRestored) return;
     const url = new URL(window.location.href);
-    if (selectedId != null) url.searchParams.set("c", String(selectedId));
-    else url.searchParams.delete("c");
-    window.history.replaceState(null, "", url);
-  }, [selectedId, selectionRestored]);
-
-  React.useEffect(() => {
-    if (!selectionRestored || !convsLoaded) return;
-    if (selectedId !== null && !convs.some((c) => c.id === selectedId)) {
-      if (getLocalStorageValue(LAST_CONVERSATION_KEY) === String(selectedId)) {
+    // A click may already have changed history before the router's query
+    // snapshot catches up. Never restore from that stale snapshot.
+    if (url.searchParams.toString() !== selectionQuery) return;
+    const requested = url.searchParams.has("approval");
+    const saved = requested ? null : getLocalStorageValue(LAST_CONVERSATION_KEY);
+    let id = parseConversationId(url.searchParams.get("c") ?? saved);
+    const missing = convsLoaded && id !== null && !convs.some((c) => c.id === id);
+    if (missing) {
+      if (getLocalStorageValue(LAST_CONVERSATION_KEY) === String(id)) {
         setLocalStorageValue(LAST_CONVERSATION_KEY, "draft");
       }
       // Approval links retain their explicit "deleted conversation" message.
-      if (!sourceRequested) setSelectedId(null);
-      return;
+      if (!requested) id = null;
     }
-    if (sourceRequested && selectedId === null) return;
-    const value = selectedId === null ? "draft" : String(selectedId);
-    if (getLocalStorageValue(LAST_CONVERSATION_KEY) !== value) {
-      setLocalStorageValue(LAST_CONVERSATION_KEY, value);
+    setSourceRequested(requested);
+    setSelectedId(id);
+    setSelectionRestored(true);
+    if (convsLoaded && !missing && (!requested || id !== null) && lastStoredSelection.current !== id) {
+      setLocalStorageValue(LAST_CONVERSATION_KEY, id === null ? "draft" : String(id));
+      lastStoredSelection.current = id;
     }
-  }, [selectionRestored, convsLoaded, convs, selectedId, sourceRequested]);
+    // Canonicalize the resolved selection, never cached component state. Next
+    // can reuse this page after navigating to another section and back.
+    if (!requested) {
+      if (id !== null) url.searchParams.set("c", String(id));
+      else url.searchParams.delete("c");
+      if (url.href !== window.location.href) window.history.replaceState(null, "", url);
+    }
+  }, [selectionQuery, convsLoaded, convs]);
 
   const selected = React.useMemo(() => convs.find((c) => c.id === selectedId) ?? null, [convs, selectedId]);
   const agentByKey = React.useMemo(() => new Map(agents.map((agent) => [agent.key, agent])), [agents]);
@@ -1302,7 +1306,9 @@ export default function ChatPage() {
     async (id: number) => {
       try {
         await api.deleteConversation(id);
-        setSelectedId((current) => (current === id ? null : current));
+        if (parseConversationId(new URLSearchParams(window.location.search).get("c")) === id) {
+          selectConversation(null);
+        }
         setSelectedConversationIds((current) => {
           if (!current.has(id)) return current;
           const next = new Set(current);
@@ -1314,7 +1320,7 @@ export default function ChatPage() {
         toast.error("Delete failed: " + (e as Error).message);
       }
     },
-    [reloadConvs],
+    [reloadConvs, selectConversation],
   );
 
   async function deleteSelectedConversations() {
@@ -1650,5 +1656,15 @@ export default function ChatPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function ChatPage() {
+  return (
+    <React.Suspense
+      fallback={<div role="status" className="p-6 text-sm text-muted-foreground">Loading the conversation…</div>}
+    >
+      <ChatPageContent />
+    </React.Suspense>
   );
 }
