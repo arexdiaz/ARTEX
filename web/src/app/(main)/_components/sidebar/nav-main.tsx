@@ -30,6 +30,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { useChatNavigation } from "@/stores/chat-navigation";
 import type {
   NavBadge,
   NavGroup,
@@ -189,25 +190,23 @@ function NavLinkItem({ item, isActive, showIconFallback }: NavLinkItemProps) {
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild aria-disabled={item.disabled} tooltip={item.title} isActive={isActive}>
-        {item.id === "chat" ? (
-          // A static-export router cache can reuse the initial ?c= URL even
-          // after history changes. Re-enter Chat with a fresh route so its
-          // saved selection wins over that stale cached URL.
-          <a href={item.url}>
-            <NavLinkIcon item={item} showFallback={showIconFallback} />
-            <span>{item.title}</span>
-          </a>
-        ) : (
-          <Link
-            prefetch={false}
-            href={item.url}
-            target={item.newTab ? "_blank" : undefined}
-            rel={item.newTab ? "noreferrer" : undefined}
-          >
-            <NavLinkIcon item={item} showFallback={showIconFallback} />
-            <span>{item.title}</span>
-          </Link>
-        )}
+        <Link
+          prefetch={false}
+          href={item.url}
+          target={item.newTab ? "_blank" : undefined}
+          rel={item.newTab ? "noreferrer" : undefined}
+          onNavigate={(event) => {
+            if (item.id !== "chat") return;
+            if (window.location.pathname.replace(/\/+$/, "") === "/chat") {
+              event.preventDefault();
+              return;
+            }
+            useChatNavigation.getState().requestRestore();
+          }}
+        >
+          <NavLinkIcon item={item} showFallback={showIconFallback} />
+          <span>{item.title}</span>
+        </Link>
       </SidebarMenuButton>
       {item.id === "approvals" ? <InterceptPendingBadge /> : <NavItemBadge badge={item.badge} />}
     </SidebarMenuItem>

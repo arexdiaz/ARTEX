@@ -64,6 +64,7 @@ import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.
 import { isBtwCommand } from "@/lib/side-questions";
 import type { Activity, Agent, ChatAttachment, Conversation, LLMProfile } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useChatNavigation } from "@/stores/chat-navigation";
 
 // fmtBytes renders a human file size for attachment chips (mirrors transcript.tsx).
 function fmtBytes(n: number): string {
@@ -1064,6 +1065,8 @@ function AgentGroupHeader({
 
 function ChatPageContent() {
   const selectionQuery = useSearchParams().toString();
+  const restoreRequest = useChatNavigation((state) => state.restoreRequest);
+  const completeRestore = useChatNavigation((state) => state.completeRestore);
   const isMobile = useIsMobile();
   const [mobileConversationsOpen, setMobileConversationsOpen] = React.useState(false);
   const mobileConversationsTrigger = React.useRef<HTMLButtonElement>(null);
@@ -1193,12 +1196,14 @@ function ChatPageContent() {
   // the last selection. "draft" also remembers an intentional New conversation.
   React.useEffect(() => {
     const url = new URL(window.location.href);
+    if (url.pathname.replace(/\/+$/, "") !== "/chat") return;
     // A click may already have changed history before the router's query
     // snapshot catches up. Never restore from that stale snapshot.
     if (url.searchParams.toString() !== selectionQuery) return;
-    const requested = url.searchParams.has("approval");
+    const restoring = restoreRequest !== null;
+    const requested = !restoring && url.searchParams.has("approval");
     const saved = requested ? null : getLocalStorageValue(LAST_CONVERSATION_KEY);
-    let id = parseConversationId(url.searchParams.get("c") ?? saved);
+    let id = parseConversationId(restoring ? saved : (url.searchParams.get("c") ?? saved));
     const missing = convsLoaded && id !== null && !convs.some((c) => c.id === id);
     if (missing) {
       if (getLocalStorageValue(LAST_CONVERSATION_KEY) === String(id)) {
@@ -1217,11 +1222,13 @@ function ChatPageContent() {
     // Canonicalize the resolved selection, never cached component state. Next
     // can reuse this page after navigating to another section and back.
     if (!requested) {
+      if (restoring) url.searchParams.delete("approval");
       if (id !== null) url.searchParams.set("c", String(id));
       else url.searchParams.delete("c");
       if (url.href !== window.location.href) window.history.replaceState(null, "", url);
     }
-  }, [selectionQuery, convsLoaded, convs]);
+    if (restoreRequest !== null) completeRestore(restoreRequest);
+  }, [selectionQuery, convsLoaded, convs, restoreRequest, completeRestore]);
 
   const selected = React.useMemo(() => convs.find((c) => c.id === selectedId) ?? null, [convs, selectedId]);
   const agentByKey = React.useMemo(() => new Map(agents.map((agent) => [agent.key, agent])), [agents]);
