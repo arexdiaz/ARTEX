@@ -98,6 +98,12 @@ const CONVERSATION_LIST_PAGE = 100;
 // rail looks the same after a reload; unknown keys are harmless (a deleted agent
 // simply never renders a group again).
 const COLLAPSED_AGENTS_KEY = "artex.chat.collapsed-agents";
+const LAST_CONVERSATION_KEY = "artex.chat.last-conversation";
+
+function parseConversationId(value: string | null): number | null {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
 
 function conversationIsPinned(conversation: Conversation): boolean {
   return conversation.pinned ?? Boolean(conversation.pinned_at);
@@ -573,10 +579,17 @@ function ChatView({
   // ---- transcript auto-scroll (open → bottom; stick to bottom unless scrolled up) ----
   const contentRef = React.useRef<HTMLDivElement | null>(null);
   const atBottomRef = React.useRef(true);
+  const lastScrollTopRef = React.useRef(0);
   const viewport = React.useCallback(
     () => (contentRef.current?.closest('[data-slot="scroll-area-viewport"]') as HTMLElement | null) ?? null,
     [],
   );
+  const scrollToBottom = React.useCallback(() => {
+    const vp = viewport();
+    if (!vp) return;
+    vp.scrollTop = vp.scrollHeight;
+    lastScrollTopRef.current = vp.scrollTop;
+  }, [viewport]);
   // Scroll-up loads one older page and prepends it, preserving the visual position
   // so the view doesn't jump (record height/offset before, restore the delta after).
   const loadEarlier = React.useCallback(async () => {
@@ -584,6 +597,7 @@ function ChatView({
     const vp = viewport();
     if (!vp) return;
     loadingMoreRef.current = true;
+    atBottomRef.current = false;
     const prevH = vp.scrollHeight;
     const prevTop = vp.scrollTop;
     try {
@@ -609,8 +623,15 @@ function ChatView({
     if (!vp) return;
     const onScroll = () => {
       if (approvalFocus.state && !focusHistory.ready) return;
-      atBottomRef.current = vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 60;
-      if (vp.scrollTop <= 80) void loadEarlier(); // near top → pull an older page
+      const top = vp.scrollTop;
+      const movedUp = top < lastScrollTopRef.current - 1;
+      const remaining = vp.scrollHeight - vp.clientHeight - top;
+      // Content growing underneath a stationary viewport is not the user
+      // scrolling away. Keep following late Markdown/detail loads in that case.
+      if (remaining <= 1 || (!movedUp && remaining <= 60)) atBottomRef.current = true;
+      else if (movedUp) atBottomRef.current = false;
+      lastScrollTopRef.current = top;
+      if (movedUp && remaining > 1 && top <= 80) void loadEarlier();
     };
     vp.addEventListener("scroll", onScroll, { passive: true });
     return () => vp.removeEventListener("scroll", onScroll);
@@ -618,19 +639,30 @@ function ChatView({
   // open/switch a conversation → jump to the latest (bottom)
   // biome-ignore lint/correctness/useExhaustiveDependencies: changing conversations intentionally retriggers the scroll reset.
   React.useLayoutEffect(() => {
-    const vp = viewport();
-    if (vp) {
-      vp.scrollTop = vp.scrollHeight;
-      atBottomRef.current = true;
-    }
-  }, [conv.id, viewport]);
+    atBottomRef.current = true;
+    if (!approvalFocus.state) scrollToBottom();
+  }, [conv.id, scrollToBottom]);
   // new activity → stick to bottom only if the user is already pinned there
   // biome-ignore lint/correctness/useExhaustiveDependencies: message and running changes intentionally retrigger bottom anchoring.
   React.useLayoutEffect(() => {
     if (approvalFocus.state || !atBottomRef.current) return;
+    scrollToBottom();
+  }, [messages, running, scrollToBottom, approvalFocus.state]);
+
+  // Full answers, fonts and images can resize after the history request settles.
+  // The keyboard can resize the viewport without changing any message at all.
+  React.useEffect(() => {
+    const content = contentRef.current;
     const vp = viewport();
-    if (vp) vp.scrollTop = vp.scrollHeight;
-  }, [messages, running, viewport, approvalFocus.state]);
+    if (!content || !vp || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (approvalFocus.state || loadingMoreRef.current || !atBottomRef.current) return;
+      scrollToBottom();
+    });
+    observer.observe(content);
+    observer.observe(vp);
+    return () => observer.disconnect();
+  }, [viewport, scrollToBottom, approvalFocus.state]);
 
   // Per-conversation token total, live — same accounting as the main-agent
   // console: completed runs' `result` sum + the in-progress run's latest `usage`.
@@ -1042,6 +1074,7 @@ export default function ChatPage() {
   const [convs, setConvs] = React.useState<Conversation[]>([]);
   const [agentFilter, setAgentFilter] = React.useState<string | null>(null);
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
+  const [selectionRestored, setSelectionRestored] = React.useState(false);
   const [sourceRequested, setSourceRequested] = React.useState(false);
   const [convsLoaded, setConvsLoaded] = React.useState(false);
   const selectConversation = React.useCallback(
@@ -1053,6 +1086,7 @@ export default function ChatPage() {
         window.history.replaceState(null, "", url);
       }
       setSelectedId(id);
+      setLocalStorageValue(LAST_CONVERSATION_KEY, id === null ? "draft" : String(id));
     },
     [selectedId],
   );
@@ -1149,26 +1183,41 @@ export default function ChatPage() {
     });
   }, []);
 
-  // Restore the open conversation from the URL (?c=<id>) on mount, so a refresh
-  // returns to the same thread instead of the empty draft view. Runs after
-  // hydration (not a lazy useState init) to avoid a server/client mismatch.
+  // Explicit conversation links win; ordinary navigation back to Chat restores
+  // the last selection. "draft" also remembers an intentional New conversation.
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setSourceRequested(params.has("approval"));
-    const c = params.get("c");
-    const id = c ? Number(c) : NaN;
-    if (Number.isFinite(id)) setSelectedId(id);
+    const saved = params.has("approval") ? null : getLocalStorageValue(LAST_CONVERSATION_KEY);
+    setSelectedId(parseConversationId(params.get("c") ?? saved));
+    setSelectionRestored(true);
   }, []);
-  // Mirror the current selection into the URL (replaceState → no history spam). A
-  // selectedId with no matching conversation (e.g. a stale ?c=, or a just-created
-  // one before reloadConvs lands) simply renders the draft view — harmless — so we
-  // deliberately do NOT auto-clear it here (that raced new-conversation creation).
+  // Wait for restoration before mirroring the selection, so the initial empty
+  // draft cannot erase a deep link. Validate missing IDs after the list loads.
   React.useEffect(() => {
+    if (!selectionRestored) return;
     const url = new URL(window.location.href);
     if (selectedId != null) url.searchParams.set("c", String(selectedId));
     else url.searchParams.delete("c");
     window.history.replaceState(null, "", url);
-  }, [selectedId]);
+  }, [selectedId, selectionRestored]);
+
+  React.useEffect(() => {
+    if (!selectionRestored || !convsLoaded) return;
+    if (selectedId !== null && !convs.some((c) => c.id === selectedId)) {
+      if (getLocalStorageValue(LAST_CONVERSATION_KEY) === String(selectedId)) {
+        setLocalStorageValue(LAST_CONVERSATION_KEY, "draft");
+      }
+      // Approval links retain their explicit "deleted conversation" message.
+      if (!sourceRequested) setSelectedId(null);
+      return;
+    }
+    if (sourceRequested && selectedId === null) return;
+    const value = selectedId === null ? "draft" : String(selectedId);
+    if (getLocalStorageValue(LAST_CONVERSATION_KEY) !== value) {
+      setLocalStorageValue(LAST_CONVERSATION_KEY, value);
+    }
+  }, [selectionRestored, convsLoaded, convs, selectedId, sourceRequested]);
 
   const selected = React.useMemo(() => convs.find((c) => c.id === selectedId) ?? null, [convs, selectedId]);
   const agentByKey = React.useMemo(() => new Map(agents.map((agent) => [agent.key, agent])), [agents]);
@@ -1539,7 +1588,9 @@ export default function ChatPage() {
 
         {/* right: chat view */}
         <div className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border">
-          {selected ? (
+          {!selectionRestored || (selectedId !== null && !convsLoaded) ? (
+            <div role="status" className="p-6 text-sm text-muted-foreground">Loading the conversation…</div>
+          ) : selected ? (
             <ChatView
               key={selected.id}
               conv={selected}
@@ -1569,7 +1620,7 @@ export default function ChatPage() {
                   const insertAt = firstUnpinned < 0 ? prev.length : firstUnpinned;
                   return [...prev.slice(0, insertAt), c, ...prev.slice(insertAt)];
                 });
-                setSelectedId(c.id);
+                selectConversation(c.id);
                 void reloadConvs();
               }}
             />

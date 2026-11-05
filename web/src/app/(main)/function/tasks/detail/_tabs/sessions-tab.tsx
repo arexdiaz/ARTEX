@@ -1486,6 +1486,8 @@ export function SessionsTab({ taskId, taskPaused = false }: { taskId: string; ta
       if (vp) vp.scrollTop = vp.scrollHeight;
     });
     ro.observe(el);
+    const vp = viewport();
+    if (vp) ro.observe(vp);
     return () => ro.disconnect();
   }, [activeId, viewport, approvalFocus.state]);
 

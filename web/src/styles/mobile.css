@@ -3,10 +3,15 @@
   html:has([data-slot="sidebar-wrapper"]),
   body:has([data-slot="sidebar-wrapper"]) {
     min-height: 0;
-    height: var(--app-viewport-height, 100dvh);
+    height: 100%;
     overflow: hidden;
+    overscroll-behavior: none;
   }
   [data-slot="sidebar-wrapper"] {
+    position: fixed;
+    top: var(--app-viewport-top, 0px);
+    left: var(--app-viewport-left, 0px);
+    width: var(--app-viewport-width, 100%);
     height: var(--app-viewport-height, 100dvh);
     min-height: 0;
   }
@@ -86,7 +91,7 @@
   }
   [data-slot="chat-model-controls"] {
     min-height: 44px;
-    padding: 0 6px calc(2px + env(safe-area-inset-bottom));
+    padding: 0 6px calc(2px + var(--app-keyboard-safe-area-bottom, env(safe-area-inset-bottom)));
   }
   [data-slot="chat-model-controls"] > [data-slot="popover-trigger"] {
     min-height: 44px;
